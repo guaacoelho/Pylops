@@ -96,7 +96,7 @@ def test_PhaseShift_3dsignal(par):
 @pytest.mark.parametrize("par", [(par1), (par2), (par1v), (par2v)])
 def test_Deghosting_2dsignal(par, create_data2D):
     """Deghosting of 2d data"""
-    p2d, p2d_minus = create_data2D(1 if par["kind"] is "p" else -1)
+    p2d, p2d_minus = create_data2D(1 if par["kind"] == "p" else -1)
 
     p2d_minus_inv, p2d_plus_inv = Deghosting(
         p2d,

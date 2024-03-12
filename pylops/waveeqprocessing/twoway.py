@@ -106,6 +106,7 @@ class AcousticWave2D(LinearOperator):
             name=name,
         )
         self._register_multiplications(op_name)
+
     @staticmethod
     def _crop_model(m: NDArray, nbl: int) -> NDArray:
         """Remove absorbing boundaries from model"""
@@ -408,9 +409,9 @@ class AcousticWave2D(LinearOperator):
             f0=self.geometry.f0,
             src_type=self.geometry.src_type,
         )
-        
+
         # Update model.vp using data received as a parameter
-        initialize_function(self.model.vp, v*1e-3, self.model.padsizes)
+        initialize_function(self.model.vp, v * 1e-3, self.model.padsizes)
 
         # solve
         solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order)
