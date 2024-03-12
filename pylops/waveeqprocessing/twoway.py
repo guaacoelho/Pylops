@@ -14,6 +14,7 @@ devito_message = deps.devito_import("the twoway module")
 if devito_message is None:
     from examples.seismic import AcquisitionGeometry, Model
     from examples.seismic.acoustic import AcousticWaveSolver
+    from devito.builtins import initialize_function
 
 
 class AcousticWave2D(LinearOperator):
@@ -87,6 +88,7 @@ class AcousticWave2D(LinearOperator):
         checkpointing: bool = False,
         dtype: DTypeLike = "float32",
         name: str = "A",
+        op_name: str = "born",
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -103,7 +105,7 @@ class AcousticWave2D(LinearOperator):
             explicit=False,
             name=name,
         )
-
+        self._register_multiplications(op_name)
     @staticmethod
     def _crop_model(m: NDArray, nbl: int) -> NDArray:
         """Remove absorbing boundaries from model"""
@@ -380,12 +382,82 @@ class AcousticWave2D(LinearOperator):
             mtot += self._crop_model(m.data, self.model.nbl)
         return mtot
 
+    def _fwd_oneshot(self, isrc: int, v: NDArray) -> NDArray:
+        """Born modelling for one shot
+
+        Parameters
+        ----------
+        isrc : :obj:`int`
+            Index of source to model
+        v : :obj:`np.ndarray`
+            Velocity Model
+
+        Returns
+        -------
+        d : :obj:`np.ndarray`
+            Data
+
+        """
+        # create geometry for single source
+        geometry = AcquisitionGeometry(
+            self.model,
+            self.geometry.rec_positions,
+            self.geometry.src_positions[isrc, :],
+            self.geometry.t0,
+            self.geometry.tn,
+            f0=self.geometry.f0,
+            src_type=self.geometry.src_type,
+        )
+        
+        # Update model.vp using data received as a parameter
+        initialize_function(self.model.vp, v*1e-3, self.model.padsizes)
+
+        # solve
+        solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order)
+        d = solver.forward()[0]
+        d = d.resample(geometry.dt).data[:][: geometry.nt].T
+        return d
+
+    def _fwd_allshots(self, v: NDArray) -> NDArray:
+        """Forward modelling for all shots
+
+        Parameters
+        -----------
+        v : :obj:`np.ndarray`
+            Velocity Model
+
+        Returns
+        -------
+        dtot : :obj:`np.ndarray`
+            Data for all shots
+
+        """
+        nsrc = self.geometry.src_positions.shape[0]
+        dtot = []
+
+        for isrc in range(nsrc):
+            d = self._fwd_oneshot(isrc, v)
+            dtot.append(d)
+        dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
+        return dtot
+
+    def _adj_allshots(self, v: NDArray) -> NDArray:
+        raise Exception("Method not yet implemented")
+
+    def _register_multiplications(self, op_name: str) -> None:
+        if op_name == "born":
+            self._acoustic_matvec = self._born_allshots
+            self._acoustic_rmatvec = self._bornadj_allshots
+        if op_name == "fwd":
+            self._acoustic_matvec = self._fwd_allshots
+            self._acoustic_rmatvec = self._adj_allshots
+
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
-        y = self._born_allshots(x)
+        y = self._acoustic_matvec(x)
         return y
 
     @reshaped
     def _rmatvec(self, x: NDArray) -> NDArray:
-        y = self._bornadj_allshots(x)
+        y = self._acoustic_rmatvec(x)
         return y
