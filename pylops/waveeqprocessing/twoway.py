@@ -12,7 +12,7 @@ from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
 devito_message = deps.devito_import("the twoway module")
 
 if devito_message is None:
-    from examples.seismic import AcquisitionGeometry, Model
+    from examples.seismic import AcquisitionGeometry, Model, Receiver
     from examples.seismic.acoustic import AcousticWaveSolver
     from examples.seismic.stiffness import ISOSeismicModel, IsoElasticWaveSolver
     from devito.builtins import initialize_function
@@ -539,6 +539,8 @@ class ElasticWave2D(LinearOperator):
         dtype: DTypeLike = "float32",
         name: str = "A",
         op_name: str = "fwd",
+        recv_x: NDArray = None,
+        recv_z: NDArray = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -548,6 +550,8 @@ class ElasticWave2D(LinearOperator):
         self._create_geometry(src_x, src_z, rec_x, rec_z, t0, tn, src_type, f0=f0)
         self.checkpointing = checkpointing
         self.num_outs = 3
+        self._create_recv_coords(recv_x, recv_z)
+
         super().__init__(
             dtype=np.dtype(dtype),
             dims=vp.shape,
@@ -653,6 +657,36 @@ class ElasticWave2D(LinearOperator):
             f0=None if f0 is None else f0 * 1e-3,
         )
 
+    def _create_recv_coords(
+        self,
+        recv_x: NDArray,
+        recv_z: NDArray,
+    ) -> None :
+        """Create rec_coords for velocity
+
+        Parameters
+        ----------
+        rec_x : :obj:`numpy.ndarray`
+            Receiver x-coordinates in m
+        rec_z : :obj:`numpy.ndarray` or :obj:`float`
+            Receiver z-coordinates in m
+        """
+        if recv_x is None or recv_z is None:
+            return
+
+        nrec = len(recv_x)
+        rec_coordinates = np.empty((nrec, 2))
+        rec_coordinates[:, 0] = recv_x
+        rec_coordinates[:, 1] = recv_z
+
+        self.rec_vx = Receiver(name="rec_vx", grid=self.geometry.grid,
+                               time_range=self.geometry.time_axis, npoint=nrec,
+                               coordinates=rec_coordinates)
+
+        self.rec_vz = Receiver(name="rec_vz", grid=self.geometry.grid,
+                               time_range=self.geometry.time_axis, npoint=nrec,
+                               coordinates=rec_coordinates)
+
     def _fwd_oneshot(self, isrc: int, v: NDArray) -> NDArray:
         """Born modelling for one shot
 
@@ -683,9 +717,12 @@ class ElasticWave2D(LinearOperator):
         # Update model.vp using data received as a parameter
         initialize_function(self.model.vp, v * 1e-3, self.model.padsizes)
 
+        rec_vx = getattr(self, 'rec_vx', None)
+        rec_vz = getattr(self, 'rec_vz', None)
+
         # solve
         solver = IsoElasticWaveSolver(self.model, geometry, space_order=self.space_order)
-        rec_data = list(solver.forward()[0:3])
+        rec_data = list(solver.forward(rec_vx=rec_vx, rec_vz=rec_vz)[0:3])
 
         for ii, d in enumerate(rec_data):
             rec_data[ii] = d.resample(geometry.dt).data[:][: geometry.nt].T
