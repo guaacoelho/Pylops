@@ -16,7 +16,10 @@ if devito_message is None:
 
     from examples.seismic import AcquisitionGeometry, Model, Receiver
     from examples.seismic.acoustic import AcousticWaveSolver
-    from examples.seismic.stiffness import IsoElasticWaveSolver, ISOSeismicModel
+    from examples.seismic.stiffness import ISOSeismicModel, IsoElasticWaveSolver
+    from examples.seismic.source import TimeAxis
+    from examples.seismic.utils import sources
+    from devito.builtins import initialize_function
 
 
 class AcousticWave2D(LinearOperator):
@@ -1007,8 +1010,6 @@ class ElasticWave2D(LinearOperator):
         dtype: DTypeLike = "float32",
         name: str = "A",
         op_name: str = "fwd",
-        recv_x: NDArray = None,
-        recv_z: NDArray = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -1018,8 +1019,7 @@ class ElasticWave2D(LinearOperator):
         self._create_geometry(src_x, src_z, rec_x, rec_z, t0, tn, src_type, f0=f0)
         self.checkpointing = checkpointing
         self.num_outs = 3
-        self._create_recv_coords(recv_x, recv_z)
-
+        self.karguments = {}
         super().__init__(
             dtype=np.dtype(dtype),
             dims=vp.shape,
@@ -1125,44 +1125,6 @@ class ElasticWave2D(LinearOperator):
             f0=None if f0 is None else f0 * 1e-3,
         )
 
-    def _create_recv_coords(
-        self,
-        recv_x: NDArray,
-        recv_z: NDArray,
-    ) -> None:
-        """Create rec_coords for velocity
-
-        Parameters
-        ----------
-        rec_x : :obj:`numpy.ndarray`
-            Receiver x-coordinates in m
-        rec_z : :obj:`numpy.ndarray` or :obj:`float`
-            Receiver z-coordinates in m
-        """
-        if recv_x is None or recv_z is None:
-            return
-
-        nrec = len(recv_x)
-        rec_coordinates = np.empty((nrec, 2))
-        rec_coordinates[:, 0] = recv_x
-        rec_coordinates[:, 1] = recv_z
-
-        self.rec_vx = Receiver(
-            name="rec_vx",
-            grid=self.geometry.grid,
-            time_range=self.geometry.time_axis,
-            npoint=nrec,
-            coordinates=rec_coordinates,
-        )
-
-        self.rec_vz = Receiver(
-            name="rec_vz",
-            grid=self.geometry.grid,
-            time_range=self.geometry.time_axis,
-            npoint=nrec,
-            coordinates=rec_coordinates,
-        )
-
     def _fwd_oneshot(self, isrc: int, v: NDArray) -> NDArray:
         """Forward modelling for one shot
 
@@ -1193,14 +1155,9 @@ class ElasticWave2D(LinearOperator):
         # Update model.vp using data received as a parameter
         initialize_function(self.model.vp, v * 1e-3, self.model.padsizes)
 
-        rec_vx = getattr(self, "rec_vx", None)
-        rec_vz = getattr(self, "rec_vz", None)
-
         # solve
-        solver = IsoElasticWaveSolver(
-            self.model, geometry, space_order=self.space_order
-        )
-        rec_data = list(solver.forward(rec_vx=rec_vx, rec_vz=rec_vz)[0:3])
+        solver = IsoElasticWaveSolver(self.model, geometry, space_order=self.space_order)
+        rec_data = list(solver.forward(**self.karguments)[0:3])
 
         for ii, d in enumerate(rec_data):
             rec_data[ii] = d.resample(geometry.dt).data[:][: geometry.nt].T
@@ -1244,6 +1201,53 @@ class ElasticWave2D(LinearOperator):
     def _matvec(self, x: NDArray) -> NDArray:
         y = self._acoustic_matvec(x)
         return y
+
+    def create_receiver(self, name, rx=None, rz=None, t0=None, tn=None, dt=None):
+
+        tn = tn or self.geometry.tn
+        t0 = t0 or self.geometry.t0
+        dt = dt or self.model.critical_dt
+
+        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
+        rz = rz if rz is not None else self.geometry.rec_positions[:, 1]
+
+        nrec = len(rx)
+
+        rec_coordinates = np.empty((nrec, 2))
+        rec_coordinates[:, 0] = rx
+        rec_coordinates[:, 1] = rz
+
+        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
+        return Receiver(name=name, grid=self.geometry.grid,
+                        time_range=time_axis, npoint=nrec,
+                        coordinates=rec_coordinates)
+
+    def create_source(self, name, sx=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None):
+
+        tn = tn or self.geometry.tn
+        t0 = t0 or self.geometry.t0
+        dt = dt or self.model.critical_dt
+        f0 = f0 or self.geometry.f0
+
+        src_type = src_type or self.geometry.src_type
+
+        sx = sx or self.geometry.src_positions[:, 0]
+        sz = sz or self.geometry.src_positions[:, 1]
+
+        nsrc = len(sx)
+
+        src_coordinates = np.empty((nsrc, 2))
+        src_coordinates[:, 0] = sx
+        src_coordinates[:, 1] = sz
+
+        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
+
+        return sources[src_type](name=name, grid=self.geometry.grid, f0=f0,
+                                 time_range=time_axis, npoint=nsrc,
+                                 coordinates=src_coordinates, t0=t0)
+
+    def add_args(self, **kwargs):
+        self.karguments = kwargs
 
     @reshaped
     def _rmatvec(self, x: NDArray) -> NDArray:
