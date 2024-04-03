@@ -1197,11 +1197,6 @@ class ElasticWave2D(LinearOperator):
             self._acoustic_matvec = self._fwd_allshots
             self._acoustic_rmatvec = self._adj_allshots
 
-    @reshaped
-    def _matvec(self, x: NDArray) -> NDArray:
-        y = self._acoustic_matvec(x)
-        return y
-
     def create_receiver(self, name, rx=None, rz=None, t0=None, tn=None, dt=None):
 
         tn = tn or self.geometry.tn
@@ -1248,6 +1243,18 @@ class ElasticWave2D(LinearOperator):
 
     def add_args(self, **kwargs):
         self.karguments = kwargs
+
+    def forward(self, x: NDArray, **kwargs):
+        self._register_multiplications("fwd")
+        self.add_args(**kwargs)
+        y = self._matvec(x)
+        y = y.reshape(getattr(self, "dimsd"))
+        return y
+
+    @reshaped
+    def _matvec(self, x: NDArray) -> NDArray:
+        y = self._acoustic_matvec(x)
+        return y
 
     @reshaped
     def _rmatvec(self, x: NDArray) -> NDArray:
