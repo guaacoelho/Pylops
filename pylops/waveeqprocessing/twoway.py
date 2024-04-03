@@ -1193,6 +1193,7 @@ class ElasticWave2D(LinearOperator):
         raise Exception("Method not yet implemented")
 
     def _register_multiplications(self, op_name: str) -> None:
+        self.op_name = op_name
         if op_name == "fwd":
             self._acoustic_matvec = self._fwd_allshots
             self._acoustic_rmatvec = self._adj_allshots
@@ -1245,10 +1246,21 @@ class ElasticWave2D(LinearOperator):
         self.karguments = kwargs
 
     def forward(self, x: NDArray, **kwargs):
+        # save current op_name to get back to it after the forward modelling
+        save_op_name = self.op_name
+
+        # Update operation's type forward
         self._register_multiplications("fwd")
+
+        # Add arguments to self and execute _matvec
         self.add_args(**kwargs)
         y = self._matvec(x)
+
+        # Reshape data to dimsd format
         y = y.reshape(getattr(self, "dimsd"))
+
+        # Restore operation's type that was used before this forward modelling
+        self._register_multiplications(save_op_name)
         return y
 
     @reshaped
