@@ -386,7 +386,7 @@ class AcousticWave2D(LinearOperator):
         return mtot
 
     def _fwd_oneshot(self, isrc: int, v: NDArray) -> NDArray:
-        """Born modelling for one shot
+        """Forward modelling for one shot
 
         Parameters
         ----------
@@ -853,7 +853,7 @@ class AcousticWave3D(LinearOperator):
         return mtot
 
     def _fwd_oneshot(self, isrc: int, v: NDArray) -> NDArray:
-        """Born modelling for one shot
+        """Forward modelling for one shot
 
         Parameters
         ----------
@@ -1164,7 +1164,7 @@ class ElasticWave2D(LinearOperator):
         )
 
     def _fwd_oneshot(self, isrc: int, v: NDArray) -> NDArray:
-        """Born modelling for one shot
+        """Forward modelling for one shot
 
         Parameters
         ----------
