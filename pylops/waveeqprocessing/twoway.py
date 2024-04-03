@@ -1197,6 +1197,8 @@ class ElasticWave2D(LinearOperator):
         if op_name == "fwd":
             self._acoustic_matvec = self._fwd_allshots
             self._acoustic_rmatvec = self._adj_allshots
+        else:
+            raise Exception("The operator's name '%s' is not valid." % op_name)
 
     def create_receiver(self, name, rx=None, rz=None, t0=None, tn=None, dt=None):
 
