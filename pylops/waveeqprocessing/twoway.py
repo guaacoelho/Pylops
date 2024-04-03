@@ -19,7 +19,6 @@ if devito_message is None:
     from examples.seismic.stiffness import ISOSeismicModel, IsoElasticWaveSolver
     from examples.seismic.source import TimeAxis
     from examples.seismic.utils import sources
-    from devito.builtins import initialize_function
 
 
 class AcousticWave2D(LinearOperator):
