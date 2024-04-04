@@ -1,4 +1,4 @@
-__all__ = ["AcousticWave2D", "AcousticWave3D", "ElasticWave2D"]
+__all__ = ["AcousticWave2D", "AcousticWave3D", "ElasticWave2D", "ElasticWave3D"]
 
 from typing import Tuple
 
@@ -1273,3 +1273,204 @@ class ElasticWave2D(LinearOperator):
     def _rmatvec(self, x: NDArray) -> NDArray:
         y = self._acoustic_rmatvec(x)
         return y
+
+
+class ElasticWave3D(LinearOperator):
+    """Devito Elastic propagator.
+
+    Parameters
+    ----------
+    shape : :obj:`tuple` or :obj:`numpy.ndarray`
+        Model shape ``(nx, nz)``
+    origin : :obj:`tuple` or :obj:`numpy.ndarray`
+        Model origin ``(ox, oz)``
+    spacing : :obj:`tuple` or  :obj:`numpy.ndarray`
+        Model spacing ``(dx, dz)``
+    vp : :obj:`numpy.ndarray`
+        Velocity model in m/s
+    src_x : :obj:`numpy.ndarray`
+        Source x-coordinates in m
+    src_z : :obj:`numpy.ndarray` or :obj:`float`
+        Source z-coordinates in m
+    rec_x : :obj:`numpy.ndarray`
+        Receiver x-coordinates in m
+    rec_z : :obj:`numpy.ndarray` or :obj:`float`
+        Receiver z-coordinates in m
+    t0 : :obj:`float`
+        Initial time
+    tn : :obj:`int`
+        Number of time samples
+    src_type : :obj:`str`
+        Source type
+    space_order : :obj:`int`, optional
+        Spatial ordering of FD stencil
+    nbl : :obj:`int`, optional
+        Number ordering of samples in absorbing boundaries
+    f0 : :obj:`float`, optional
+        Source peak frequency (Hz)
+    checkpointing : :obj:`bool`, optional
+        Use checkpointing (``True``) or not (``False``). Note that
+        using checkpointing is needed when dealing with large models
+        but it will slow down computations
+    dtype : :obj:`str`, optional
+        Type of elements in input array.
+    name : :obj:`str`, optional
+        Name of operator (to be used by :func:`pylops.utils.describe.describe`)
+
+    Attributes
+    ----------
+    shape : :obj:`tuple`
+        Operator shape
+    explicit : :obj:`bool`
+        Operator contains a matrix that can be solved explicitly (``True``) or
+        not (``False``)
+
+    """
+
+    def __init__(
+        self,
+        shape: InputDimsLike,
+        origin: SamplingLike,
+        spacing: SamplingLike,
+        vp: NDArray,
+        vs: NDArray,
+        rho: NDArray,
+        src_x: NDArray,
+        src_y: NDArray,
+        src_z: NDArray,
+        rec_x: NDArray,
+        rec_y: NDArray,
+        rec_z: NDArray,
+        t0: float,
+        tn: int,
+        src_type: str = "Ricker",
+        space_order: int = 6,
+        nbl: int = 20,
+        f0: float = 20.0,
+        checkpointing: bool = False,
+        dtype: DTypeLike = "float32",
+        name: str = "A",
+        op_name: str = "fwd",
+    ) -> None:
+        if devito_message is not None:
+            raise NotImplementedError(devito_message)
+
+        # create model
+        self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl)
+        self._create_geometry(src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0)
+        self.checkpointing = checkpointing
+        self.num_outs = 4
+        self.karguments = {}
+        super().__init__(
+            dtype=np.dtype(dtype),
+            dims=vp.shape,
+            dimsd=(self.num_outs, len(src_x), len(rec_x), self.geometry.nt),
+            explicit=False,
+            name=name,
+        )
+
+
+    def _create_model(
+        self,
+        shape: InputDimsLike,
+        origin: SamplingLike,
+        spacing: SamplingLike,
+        vp: NDArray,
+        vs: NDArray,
+        rho: NDArray,
+        space_order: int = 6,
+        nbl: int = 20,
+    ) -> None:
+        """Create model
+
+        Parameters
+        ----------
+        shape : :obj:`numpy.ndarray`
+            Model shape ``(nx, nz)``
+        origin : :obj:`numpy.ndarray`
+            Model origin ``(ox, oz)``
+        spacing : :obj:`numpy.ndarray`
+            Model spacing ``(dx, dz)``
+        vp : :obj:`numpy.ndarray`
+            Velocity model in m/s
+        space_order : :obj:`int`, optional
+            Spatial ordering of FD stencil
+        nbl : :obj:`int`, optional
+            Number ordering of samples in absorbing boundaries
+
+        """
+        self.space_order = space_order
+        self.model = ISOSeismicModel(
+            space_order=space_order,
+            vp=vp * 1e-3,
+            vs=vs * 1e-3,
+            rho=rho,
+            origin=origin,
+            shape=shape,
+            dtype=np.float32,
+            spacing=spacing,
+            nbl=nbl,
+            bcs="damp",
+        )
+
+    def _create_geometry(
+        self,
+        src_x: NDArray,
+        src_y: NDArray,
+        src_z: NDArray,
+        rec_x: NDArray,
+        rec_y: NDArray,
+        rec_z: NDArray,
+        t0: float,
+        tn: int,
+        src_type: str,
+        f0: float = 20.0,
+    ) -> None:
+        """Create geometry and time axis
+
+        Parameters
+        ----------
+        src_x : :obj:`numpy.ndarray`
+            Source x-coordinates in m
+        src_y : :obj:`numpy.ndarray`
+            Source y-coordinates in m
+        src_z : :obj:`numpy.ndarray` or :obj:`float`
+            Source z-coordinates in m
+        rec_x : :obj:`numpy.ndarray`
+            Receiver x-coordinates in m
+        rec_y : :obj:`numpy.ndarray`
+            Receiver y-coordinates in m
+        rec_z : :obj:`numpy.ndarray` or :obj:`float`
+            Receiver z-coordinates in m
+        t0 : :obj:`float`
+            Initial time
+        tn : :obj:`int`
+            Number of time samples
+        src_type : :obj:`str`
+            Source type
+        f0 : :obj:`float`, optional
+            Source peak frequency (Hz)
+
+        """
+
+        nsrc, nrec = len(src_x), len(rec_x)
+        src_coordinates = np.empty((nsrc, 3))
+        src_coordinates[:, 0] = src_x
+        src_coordinates[:, 1] = src_y
+        src_coordinates[:, -1] = src_z
+
+        rec_coordinates = np.empty((nrec, 3))
+        rec_coordinates[:, 0] = rec_x
+        rec_coordinates[:, 1] = rec_y
+        rec_coordinates[:, -1] = rec_z
+
+        self.geometry = AcquisitionGeometry(
+            self.model,
+            rec_coordinates,
+            src_coordinates,
+            t0,
+            tn,
+            src_type=src_type,
+            f0=None if f0 is None else f0 * 1e-3,
+        )
+
