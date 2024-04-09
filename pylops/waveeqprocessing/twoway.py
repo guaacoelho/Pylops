@@ -1369,6 +1369,7 @@ class ElasticWave3D(LinearOperator):
             name=name,
         )
 
+        self._register_multiplications(op_name)
 
     def _create_model(
         self,
@@ -1474,3 +1475,156 @@ class ElasticWave3D(LinearOperator):
             f0=None if f0 is None else f0 * 1e-3,
         )
 
+    def _fwd_oneshot(self, isrc: int, v: NDArray) -> NDArray:
+        """Forward modelling for one shot
+
+        Parameters
+        ----------
+        isrc : :obj:`int`
+            Index of source to model
+        v : :obj:`np.ndarray`
+            Velocity Model
+
+        Returns
+        -------
+        d : :obj:`np.ndarray`
+            Data
+
+        """
+        # create geometry for single source
+        geometry = AcquisitionGeometry(
+            self.model,
+            self.geometry.rec_positions,
+            self.geometry.src_positions[isrc, :],
+            self.geometry.t0,
+            self.geometry.tn,
+            f0=self.geometry.f0,
+            src_type=self.geometry.src_type,
+        )
+
+        # Update model.vp using data received as a parameter
+        initialize_function(self.model.vp, v * 1e-3, self.model.padsizes)
+
+        # solve
+        solver = IsoElasticWaveSolver(self.model, geometry, space_order=self.space_order)
+        rec_data = list(solver.forward(**self.karguments)[0:4])
+
+        for ii, d in enumerate(rec_data):
+            rec_data[ii] = d.resample(geometry.dt).data[:][: geometry.nt].T
+        return rec_data
+
+    def _fwd_allshots(self, v: NDArray) -> NDArray:
+        """Forward modelling for all shots
+
+        Parameters
+        -----------
+        v : :obj:`np.ndarray`
+            Velocity Model
+
+        Returns
+        -------
+        dtot : :obj:`np.ndarray`
+            Data for all shots
+
+        """
+        nsrc = self.geometry.src_positions.shape[0]
+        dtot = []
+
+        for isrc in range(nsrc):
+            d = self._fwd_oneshot(isrc, v)
+            dtot.append(d)
+
+        # Adjust dimensions
+        rec_data = list(zip(*dtot))
+
+        return np.array(rec_data)
+
+    def _adj_allshots(self, v: NDArray) -> NDArray:
+        raise Exception("Method not yet implemented")
+
+    def _register_multiplications(self, op_name: str) -> None:
+        self.op_name = op_name
+        if op_name == "fwd":
+            self._acoustic_matvec = self._fwd_allshots
+            self._acoustic_rmatvec = self._adj_allshots
+        else:
+            raise Exception("The operator's name '%s' is not valid." % op_name)
+
+    def create_receiver(self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None):
+
+        tn = tn or self.geometry.tn
+        t0 = t0 or self.geometry.t0
+        dt = dt or self.model.critical_dt
+
+        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
+        ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
+        rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
+
+        nrec = len(rx)
+
+        rec_coordinates = np.empty((nrec, 3))
+        rec_coordinates[:, 0] = rx
+        rec_coordinates[:, 1] = ry
+        rec_coordinates[:, -1] = rz
+
+        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
+        return Receiver(name=name, grid=self.geometry.grid,
+                        time_range=time_axis, npoint=nrec,
+                        coordinates=rec_coordinates)
+
+    def create_source(self, name, sx=None, sy=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None):
+
+        tn = tn or self.geometry.tn
+        t0 = t0 or self.geometry.t0
+        dt = dt or self.model.critical_dt
+        f0 = f0 or self.geometry.f0
+
+        src_type = src_type or self.geometry.src_type
+
+        sx = sx or self.geometry.src_positions[:, 0]
+        sy = sy or self.geometry.src_positions[:, 1]
+        sz = sz or self.geometry.src_positions[:, -1]
+
+        nsrc = len(sx)
+
+        src_coordinates = np.empty((nsrc, 3))
+        src_coordinates[:, 0] = sx
+        src_coordinates[:, 1] = sy
+        src_coordinates[:, -1] = sz
+
+        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
+
+        return sources[src_type](name=name, grid=self.geometry.grid, f0=f0,
+                                 time_range=time_axis, npoint=nsrc,
+                                 coordinates=src_coordinates, t0=t0)
+
+    def add_args(self, **kwargs):
+        self.karguments = kwargs
+
+    def forward(self, x: NDArray, **kwargs):
+        # save current op_name to get back to it after the forward modelling
+        save_op_name = self.op_name
+
+        # Update operation's type forward
+        self._register_multiplications("fwd")
+
+        # Add arguments to self and execute _matvec
+        self.add_args(**kwargs)
+        y = self._matvec(x)
+
+        # Reshape data to dimsd format
+        y = y.reshape(getattr(self, "dimsd"))
+
+        # Restore operation's type that was used before this forward modelling
+        self._register_multiplications(save_op_name)
+        return y
+
+    @reshaped
+    def _matvec(self, x: NDArray) -> NDArray:
+        y = self._acoustic_matvec(x)
+        return y
+
+    @reshaped
+    def _rmatvec(self, x: NDArray) -> NDArray:
+        y = self._acoustic_rmatvec(x)
+        return y
