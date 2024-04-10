@@ -446,16 +446,12 @@ class AcousticWave2D(LinearOperator):
         dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
         return dtot
 
-    def _adj_allshots(self, v: NDArray) -> NDArray:
-        raise Exception("Method not yet implemented")
-
     def _register_multiplications(self, op_name: str) -> None:
         if op_name == "born":
             self._acoustic_matvec = self._born_allshots
-            self._acoustic_rmatvec = self._bornadj_allshots
         if op_name == "fwd":
             self._acoustic_matvec = self._fwd_allshots
-            self._acoustic_rmatvec = self._adj_allshots
+        self._acoustic_rmatvec = self._bornadj_allshots
 
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
@@ -913,16 +909,12 @@ class AcousticWave3D(LinearOperator):
         dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
         return dtot
 
-    def _adj_allshots(self, v: NDArray) -> NDArray:
-        raise Exception("Method not yet implemented")
-
     def _register_multiplications(self, op_name: str) -> None:
         if op_name == "born":
             self._acoustic_matvec = self._born_allshots
-            self._acoustic_rmatvec = self._bornadj_allshots
         if op_name == "fwd":
             self._acoustic_matvec = self._fwd_allshots
-            self._acoustic_rmatvec = self._adj_allshots
+        self._acoustic_rmatvec = self._bornadj_allshots
 
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
