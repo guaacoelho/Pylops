@@ -1009,16 +1009,34 @@ class ElasticWave2D(LinearOperator):
         self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl)
         self._create_geometry(src_x, src_z, rec_x, rec_z, t0, tn, src_type, f0=f0)
         self.checkpointing = checkpointing
-        self.num_outs = 3
         self.karguments = {}
+
+        num_outs = 3
         super().__init__(
             dtype=np.dtype(dtype),
             dims=vp.shape,
-            dimsd=(self.num_outs, len(src_x), len(rec_x), self.geometry.nt),
+            dimsd=(num_outs, len(src_x), len(rec_x), self.geometry.nt),
             explicit=False,
             name=name,
         )
+
+        n_grad_out = 3
+        # This new operator is used to generate a Adjoint Operator with correct dimsd.
+        self.grad_op = LinearOperator(
+            Op=self,
+            dtype=np.dtype(dtype),
+            shape=(self.shape[0], self.shape[1] * n_grad_out),
+            dims=(n_grad_out, vp.shape[0], vp.shape[1]),
+            dimsd=(num_outs, len(src_x), len(rec_x), self.geometry.nt),
+            explicit=False,
+            name="grad_op",)
+
         self._register_multiplications(op_name)
+
+    @staticmethod
+    def _crop_model(m: NDArray, nbl: int) -> NDArray:
+        """Remove absorbing boundaries from model"""
+        return m[nbl:-nbl, nbl:-nbl]
 
     def _create_model(
         self,
@@ -1180,14 +1198,95 @@ class ElasticWave2D(LinearOperator):
 
         return np.array(rec_data)
 
-    def _adj_allshots(self, v: NDArray) -> NDArray:
-        raise Exception("Method not yet implemented")
+    def _grad_oneshot(self, isrc, dobs):
+        """Adjoint gradient modelling for one shot
+
+        Parameters
+        ----------
+        isrc : :obj:`float`
+            Index of source to model
+        dobs : :obj:`np.ndarray`
+            Observed data to inject
+
+        Returns
+        -------
+        model : :obj:`np.ndarray`
+            Model
+
+        """
+        # create geometry for single source
+        geometry = AcquisitionGeometry(
+            self.model,
+            self.geometry.rec_positions,
+            self.geometry.src_positions[isrc, :],
+            self.geometry.t0,
+            self.geometry.tn,
+            f0=self.geometry.f0,
+            src_type=self.geometry.src_type,
+        )
+        # create boundary data
+        rec_vx = self.geometry.rec.copy()
+        rec_vx.data[:] = dobs[1].T[:]
+
+        rec_vz = self.geometry.rec.copy()
+        rec_vz.data[:] = dobs[2].T[:]
+
+        solver = IsoElasticWaveSolver(self.model, geometry, space_order=self.space_order)
+
+        # source wavefield
+        if hasattr(self, "src_wavefield"):
+            u0 = self.src_wavefield[isrc]
+        else:
+            par = self.karguments.get("par", "lam-mu")
+            u0 = solver.forward(save=True, par=par)[3]
+
+        # adjoint modelling (reverse wavefield plus imaging condition)
+        grad1, grad2, grad3 = solver.jacobian_adjoint(
+            rec_vx, rec_vz, u0, checkpointing=self.checkpointing, **self.karguments
+        )[0:3]
+
+        return grad1, grad2, grad3
+
+    def _grad_allshots(self, dobs: NDArray) -> NDArray:
+        """Adjoint Gradient modelling for all shots
+
+        Parameters
+        ----------
+        dobs : :obj:`np.ndarray`
+            Observed data to inject.
+
+            The shape of dobs is (3, nsrc, nrecs. nt):
+
+                dobs[0] = rec_tau
+                dobs[1] = rec_vx
+                dobs[2] = rec_vy
+        Returns
+        -------
+        model : :obj:`np.ndarray`
+            Model
+
+        """
+        nsrc = self.geometry.src_positions.shape[0]
+
+        shape = self.model.shape
+        mtot = np.zeros((3, shape[0], shape[1]), dtype=np.float32)
+
+        for isrc in range(nsrc):
+            # For each dobs get data equivalent to isrc shot
+            isrc_rec = [rec[isrc] for rec in dobs]
+
+            grads = self._grad_oneshot(isrc, isrc_rec)
+
+            # post-process data
+            for ii, g in enumerate(grads):
+                mtot[ii] += self._crop_model(g.data, self.model.nbl)
+        return mtot
 
     def _register_multiplications(self, op_name: str) -> None:
         self.op_name = op_name
         if op_name == "fwd":
             self._acoustic_matvec = self._fwd_allshots
-            self._acoustic_rmatvec = self._adj_allshots
+            self._acoustic_rmatvec = self._grad_allshots
         else:
             raise Exception("The operator's name '%s' is not valid." % op_name)
 
@@ -1236,7 +1335,11 @@ class ElasticWave2D(LinearOperator):
                                  coordinates=src_coordinates, t0=t0)
 
     def add_args(self, **kwargs):
+        # TODO: decide if this values will be manteined at the object or it will be resete after matvec's execution.
         self.karguments = kwargs
+
+    def _adjoint(self) -> LinearOperator:
+        return self.grad_op._adjoint()
 
     def forward(self, x: NDArray, **kwargs):
         # save current op_name to get back to it after the forward modelling
@@ -1351,12 +1454,13 @@ class ElasticWave3D(LinearOperator):
         self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl)
         self._create_geometry(src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0)
         self.checkpointing = checkpointing
-        self.num_outs = 4
         self.karguments = {}
+
+        num_outs = 4
         super().__init__(
             dtype=np.dtype(dtype),
             dims=vp.shape,
-            dimsd=(self.num_outs, len(src_x), len(rec_x), self.geometry.nt),
+            dimsd=(num_outs, len(src_x), len(rec_x), self.geometry.nt),
             explicit=False,
             name=name,
         )
