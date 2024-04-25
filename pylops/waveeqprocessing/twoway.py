@@ -8,12 +8,14 @@ from pylops import LinearOperator
 from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
+from typing import Union
 
 devito_message = deps.devito_import("the twoway module")
 
 if devito_message is None:
     from devito.builtins import initialize_function
 
+    from devito import Function
     from examples.seismic import AcquisitionGeometry, Model, Receiver
     from examples.seismic.acoustic import AcousticWaveSolver
     from examples.seismic.stiffness import ISOSeismicModel, IsoElasticWaveSolver
@@ -979,6 +981,9 @@ class ElasticWave2D(LinearOperator):
 
     """
 
+    _list_par = {'lam-mu': ['lam', 'mu', 'rho'], 'vp-vs-rho': ['vp', 'vs', 'rho'],
+                 'Ip-Is-rho': ['Ip', 'Is', 'rho']}
+
     def __init__(
         self,
         shape: InputDimsLike,
@@ -1014,24 +1019,14 @@ class ElasticWave2D(LinearOperator):
         self.karguments = {}
 
         num_outs = 3
+        n_grad_out = 3
         super().__init__(
             dtype=np.dtype(dtype),
-            dims=vp.shape,
+            dims=(n_grad_out, vp.shape[0], vp.shape[1]),
             dimsd=(num_outs, len(src_x), len(rec_x), self.geometry.nt),
             explicit=False,
             name=name,
         )
-
-        n_grad_out = 3
-        # This new operator is used to generate a Adjoint Operator with correct dimsd.
-        self.grad_op = LinearOperator(
-            Op=self,
-            dtype=np.dtype(dtype),
-            shape=(self.shape[0], self.shape[1] * n_grad_out),
-            dims=(n_grad_out, vp.shape[0], vp.shape[1]),
-            dimsd=(num_outs, len(src_x), len(rec_x), self.geometry.nt),
-            explicit=False,
-            name="grad_op",)
 
         self._register_multiplications(op_name)
 
@@ -1163,11 +1158,22 @@ class ElasticWave2D(LinearOperator):
             src_type=self.geometry.src_type,
         )
 
-        # Update model.vp using data received as a parameter
-        initialize_function(self.model.vp, v * 1e-3, self.model.padsizes)
-
-        # If "par" was not passed as a parameter to forward execution, use the operator's default value
+        # If "par" was not provided as a parameter to forward execution, use the operator's default value
         self.karguments["par"] = self.karguments.get("par", self.par)
+
+        # get arguments that will be used for this elastic forward execution
+        args = self._list_par[self.karguments["par"]]
+
+        # create functions representing the physical parameters received as parameters
+        functions = [Function(name=name, grid=self.model.grid, space_order=self.model.space_order,
+                     parameter=True) for name in args]
+
+        # Assignment of values to physical parameters functions based on the values in 'v'
+        for function, value in zip(functions, v):
+            initialize_function(function, value, self.model.padsizes)
+
+        # Update 'karguments' to contain the values of the parameters defined in 'args'
+        self.karguments.update(dict(zip(args, functions)))
 
         solver = IsoElasticWaveSolver(self.model, geometry, space_order=self.space_order)
         rec_data = list(solver.forward(**self.karguments)[0:3])
@@ -1345,8 +1351,11 @@ class ElasticWave2D(LinearOperator):
         # TODO: decide if this values will be manteined at the object or it will be resete after matvec's execution.
         self.karguments = kwargs
 
-    def _adjoint(self) -> LinearOperator:
-        return self.grad_op._adjoint()
+    def __mul__(self, x: Union[float, LinearOperator]) -> LinearOperator:
+        # data must be a np.array
+        if not isinstance(x, np.ndarray):
+            x = np.array(x)
+        return super().dot(x)
 
     def forward(self, x: NDArray, **kwargs):
         # save current op_name to get back to it after the forward modelling
