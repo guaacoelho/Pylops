@@ -1831,7 +1831,7 @@ class ViscoAcousticWave2D(LinearOperator):
         checkpointing: bool = False,
         dtype: DTypeLike = "float32",
         name: str = "A",
-        op_name: str = "born",
+        op_name: str = "fwd",
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -1956,143 +1956,6 @@ class ViscoAcousticWave2D(LinearOperator):
             f0=None if f0 is None else f0 * 1e-3,
         )
 
-    def _born_oneshot(self, isrc: int, dm: NDArray) -> NDArray:
-        """Born modelling for one shot
-
-        Parameters
-        ----------
-        isrc : :obj:`int`
-            Index of source to model
-        dm : :obj:`np.ndarray`
-            Model perturbation
-
-        Returns
-        -------
-        d : :obj:`np.ndarray`
-            Data
-
-        """
-        # create geometry for single source
-        geometry = AcquisitionGeometry(
-            self.model,
-            self.geometry.rec_positions,
-            self.geometry.src_positions[isrc, :],
-            self.geometry.t0,
-            self.geometry.tn,
-            f0=self.geometry.f0,
-            src_type=self.geometry.src_type,
-        )
-
-        # set perturbation
-        dmext = np.zeros(self.model.grid.shape, dtype=np.float32)
-        dmext[self.model.nbl : -self.model.nbl, self.model.nbl : -self.model.nbl] = dm
-
-        # solve
-        solver = ViscoacousticWaveSolver(
-            self.model,
-            geometry,
-            space_order=self.space_order,
-            kernel=self.kernel,
-            time_order=self.time_order,
-        )
-        d = solver.jacobian(dmext)[0]
-        d = d.resample(geometry.dt).data[:][: geometry.nt].T
-        return d
-
-    def _born_allshots(self, dm: NDArray) -> NDArray:
-        """Born modelling for all shots
-
-        Parameters
-        -----------
-        dm : :obj:`np.ndarray`
-            Model perturbation
-
-        Returns
-        -------
-        dtot : :obj:`np.ndarray`
-            Data for all shots
-
-        """
-        nsrc = self.geometry.src_positions.shape[0]
-        dtot = []
-
-        for isrc in range(nsrc):
-            d = self._born_oneshot(isrc, dm)
-            dtot.append(d)
-        dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
-        return dtot
-
-    def _bornadj_oneshot(self, isrc, dobs):
-        """Adjoint born modelling for one shot
-
-        Parameters
-        ----------
-        isrc : :obj:`float`
-            Index of source to model
-        dobs : :obj:`np.ndarray`
-            Observed data to inject
-
-        Returns
-        -------
-        model : :obj:`np.ndarray`
-            Model
-
-        """
-        # create geometry for single source
-        geometry = AcquisitionGeometry(
-            self.model,
-            self.geometry.rec_positions,
-            self.geometry.src_positions[isrc, :],
-            self.geometry.t0,
-            self.geometry.tn,
-            f0=self.geometry.f0,
-            src_type=self.geometry.src_type,
-        )
-        # create boundary data
-        recs = self.geometry.rec.copy()
-        recs.data[:] = dobs.T[:]
-
-        solver = ViscoacousticWaveSolver(
-            self.model,
-            geometry,
-            space_order=self.space_order,
-            kernel=self.kernel,
-            time_order=self.time_order,
-        )
-
-        # source wavefield
-        if hasattr(self, "src_wavefield"):
-            u0 = self.src_wavefield[isrc]
-        else:
-            u0 = solver.forward(save=True)[1]
-        # adjoint modelling (reverse wavefield plus imaging condition)
-        model = solver.jacobian_adjoint(
-            rec=recs, u=u0, checkpointing=self.checkpointing
-        )[0]
-        return model
-
-    def _bornadj_allshots(self, dobs: NDArray) -> NDArray:
-        """Adjoint Born modelling for all shots
-
-        Parameters
-        ----------
-        dobs : :obj:`np.ndarray`
-            Observed data to inject
-
-        Returns
-        -------
-        model : :obj:`np.ndarray`
-            Model
-
-        """
-        nsrc = self.geometry.src_positions.shape[0]
-        mtot = np.zeros(self.model.shape, dtype=np.float32)
-
-        for isrc in range(nsrc):
-            m = self._bornadj_oneshot(isrc, dobs[isrc])
-            mtot += self._crop_model(m.data, self.model.nbl)
-        return mtot
-
     def _fwd_oneshot(self, isrc: int, v: NDArray) -> NDArray:
         """Forward modelling for one shot
 
@@ -2157,14 +2020,11 @@ class ViscoAcousticWave2D(LinearOperator):
             dtot.append(d)
         dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
         return dtot
-
+    
     def _adj_allshots(self, v: NDArray) -> NDArray:
         raise Exception("Method not yet implemented")
 
     def _register_multiplications(self, op_name: str) -> None:
-        if op_name == "born":
-            self._acoustic_matvec = self._born_allshots
-            self._acoustic_rmatvec = self._bornadj_allshots
         if op_name == "fwd":
             self._acoustic_matvec = self._fwd_allshots
             self._acoustic_rmatvec = self._adj_allshots
