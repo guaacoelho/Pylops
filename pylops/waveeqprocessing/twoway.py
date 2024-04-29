@@ -1,4 +1,5 @@
-__all__ = ["AcousticWave2D", "AcousticWave3D", "ElasticWave2D", "ElasticWave3D", "ViscoAcousticWave2D"]
+__all__ = ["AcousticWave2D", "AcousticWave3D", "ElasticWave2D",
+           "ElasticWave3D", "ViscoAcousticWave2D"]
 
 from typing import Tuple
 
@@ -2020,7 +2021,7 @@ class ViscoAcousticWave2D(LinearOperator):
             dtot.append(d)
         dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
         return dtot
-    
+
     def _adj_allshots(self, v: NDArray) -> NDArray:
         raise Exception("Method not yet implemented")
 
