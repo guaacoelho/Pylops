@@ -932,6 +932,7 @@ class AcousticWave3D(LinearOperator):
 
 
 class _ElasticWave(LinearOperator):
+
     def _create_model(
         self,
         shape: InputDimsLike,
@@ -1014,6 +1015,10 @@ class _ElasticWave(LinearOperator):
             src_type=src_type,
             f0=None if f0 is None else f0 * 1e-3,
         )
+
+    def add_args(self, **kwargs):
+        # TODO: decide if this values will be manteined at the object or it will be resete after matvec's execution.
+        self.karguments = kwargs
 
 class ElasticWave2D(_ElasticWave):
     """Devito Elastic propagator.
@@ -1338,10 +1343,6 @@ class ElasticWave2D(_ElasticWave):
                                  time_range=time_axis, npoint=nsrc,
                                  coordinates=src_coordinates, t0=t0)
 
-    def add_args(self, **kwargs):
-        # TODO: decide if this values will be manteined at the object or it will be resete after matvec's execution.
-        self.karguments = kwargs
-
     def __mul__(self, x: Union[float, LinearOperator]) -> LinearOperator:
         # data must be a np.array
         if not isinstance(x, np.ndarray):
@@ -1601,9 +1602,6 @@ class ElasticWave3D(_ElasticWave):
         return sources[src_type](name=name, grid=self.geometry.grid, f0=f0,
                                  time_range=time_axis, npoint=nsrc,
                                  coordinates=src_coordinates, t0=t0)
-
-    def add_args(self, **kwargs):
-        self.karguments = kwargs
 
     def forward(self, x: NDArray, **kwargs):
         # save current op_name to get back to it after the forward modelling
