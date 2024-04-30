@@ -1463,6 +1463,7 @@ class ElasticWave3D(LinearOperator):
         checkpointing: bool = False,
         dtype: DTypeLike = "float32",
         name: str = "A",
+        par: str = "lam-mu",
         op_name: str = "fwd",
     ) -> None:
         if devito_message is not None:
@@ -1472,6 +1473,7 @@ class ElasticWave3D(LinearOperator):
         self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl)
         self._create_geometry(src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0)
         self.checkpointing = checkpointing
+        self.par = par
         self.karguments = {}
 
         num_outs = 4
@@ -1618,6 +1620,9 @@ class ElasticWave3D(LinearOperator):
 
         # Update model.vp using data received as a parameter
         initialize_function(self.model.vp, v * 1e-3, self.model.padsizes)
+
+        # If "par" was not provided as a parameter to forward execution, use the operator's default value
+        self.karguments["par"] = self.karguments.get("par", self.par)
 
         # solve
         solver = IsoElasticWaveSolver(self.model, geometry, space_order=self.space_order)
