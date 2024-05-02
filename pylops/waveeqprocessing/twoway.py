@@ -1016,6 +1016,60 @@ class _ElasticWave(LinearOperator):
             f0=None if f0 is None else f0 * 1e-3,
         )
 
+    def create_receiver(self, name, rx=None, rz=None, ry=None):
+        #TODO: Update this method to allow the use of differents tn, t0 or dt
+
+        ndim = self.model.dim
+        if ndim == 2 and ry is not None:
+            raise Exception("This is a 2D ElasticWave, 'ry' must not be used as a argument. Use 'rz' instead.")
+
+
+        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
+        rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
+        if ndim == 3:
+            ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
+
+        nrec = len(rx)
+
+        rec_coordinates = np.empty((nrec, ndim))
+        rec_coordinates[:, 0] = rx
+        rec_coordinates[:, -1] = rz
+        if ndim == 3:
+            rec_coordinates[:, 1] = ry
+
+        return Receiver(name=name, grid=self.geometry.grid,
+                        time_range=self.geometry.time_axis, npoint=nrec,
+                        coordinates=rec_coordinates)
+
+    def create_source(self, name, sx=None, sz=None, sy=None, f0=None, src_type=None):
+        
+        ndim = self.model.dim
+
+        if ndim == 2 and sy is not None:
+            raise Exception("This is a 2D ElasticWave, 'sy' must not be used as a argument. Use 'sz' instead.")
+
+        #TODO: Update this method to allow the use of differents tn, t0 or dt
+        f0 = f0*1e-3 if f0 is not None else self.geometry.f0 # f0 is passed as Hz, Devito uses KHz
+
+        src_type = src_type or self.geometry.src_type
+
+        sx = sx if sx is not None else self.geometry.src_positions[:, 0]
+        sz = sz if sz is not None else self.geometry.src_positions[:, -1]
+        if self.model.dim == 3:
+            sy = sy if sy is not None else self.geometry.src_positions[:, 1]
+
+        nsrc = len(sx)
+
+        src_coordinates = np.empty((nsrc, ndim))
+        src_coordinates[:, 0] = sx
+        src_coordinates[:, -1] = sz
+        if ndim == 3:
+            src_coordinates[:, 1] = sy
+
+        return sources[src_type](name=name, grid=self.geometry.grid, f0=f0,
+                                 time_range=self.geometry.time_axis, npoint=nsrc,
+                                 coordinates=src_coordinates, t0=self.geometry._t0w)
+
     def add_args(self, **kwargs):
         # TODO: decide if this values will be manteined at the object or it will be resete after matvec's execution.
         self.karguments = kwargs
@@ -1299,50 +1353,6 @@ class ElasticWave2D(_ElasticWave):
         else:
             raise Exception("The operator's name '%s' is not valid." % op_name)
 
-    def create_receiver(self, name, rx=None, rz=None, t0=None, tn=None, dt=None):
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-
-        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
-        rz = rz if rz is not None else self.geometry.rec_positions[:, 1]
-
-        nrec = len(rx)
-
-        rec_coordinates = np.empty((nrec, 2))
-        rec_coordinates[:, 0] = rx
-        rec_coordinates[:, 1] = rz
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(name=name, grid=self.geometry.grid,
-                        time_range=time_axis, npoint=nrec,
-                        coordinates=rec_coordinates)
-
-    def create_source(self, name, sx=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None):
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-        f0 = f0 or self.geometry.f0
-
-        src_type = src_type or self.geometry.src_type
-
-        sx = sx or self.geometry.src_positions[:, 0]
-        sz = sz or self.geometry.src_positions[:, 1]
-
-        nsrc = len(sx)
-
-        src_coordinates = np.empty((nsrc, 2))
-        src_coordinates[:, 0] = sx
-        src_coordinates[:, 1] = sz
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-
-        return sources[src_type](name=name, grid=self.geometry.grid, f0=f0,
-                                 time_range=time_axis, npoint=nsrc,
-                                 coordinates=src_coordinates, t0=t0)
-
     def __mul__(self, x: Union[float, LinearOperator]) -> LinearOperator:
         # data must be a np.array
         if not isinstance(x, np.ndarray):
@@ -1554,54 +1564,6 @@ class ElasticWave3D(_ElasticWave):
             self._acoustic_rmatvec = self._adj_allshots
         else:
             raise Exception("The operator's name '%s' is not valid." % op_name)
-
-    def create_receiver(self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None):
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-
-        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
-        ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
-        rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
-
-        nrec = len(rx)
-
-        rec_coordinates = np.empty((nrec, 3))
-        rec_coordinates[:, 0] = rx
-        rec_coordinates[:, 1] = ry
-        rec_coordinates[:, -1] = rz
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(name=name, grid=self.geometry.grid,
-                        time_range=time_axis, npoint=nrec,
-                        coordinates=rec_coordinates)
-
-    def create_source(self, name, sx=None, sy=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None):
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-        f0 = f0 or self.geometry.f0
-
-        src_type = src_type or self.geometry.src_type
-
-        sx = sx or self.geometry.src_positions[:, 0]
-        sy = sy or self.geometry.src_positions[:, 1]
-        sz = sz or self.geometry.src_positions[:, -1]
-
-        nsrc = len(sx)
-
-        src_coordinates = np.empty((nsrc, 3))
-        src_coordinates[:, 0] = sx
-        src_coordinates[:, 1] = sy
-        src_coordinates[:, -1] = sz
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-
-        return sources[src_type](name=name, grid=self.geometry.grid, f0=f0,
-                                 time_range=time_axis, npoint=nsrc,
-                                 coordinates=src_coordinates, t0=t0)
 
     def forward(self, x: NDArray, **kwargs):
         # save current op_name to get back to it after the forward modelling
