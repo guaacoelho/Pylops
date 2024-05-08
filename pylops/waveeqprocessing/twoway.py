@@ -2045,6 +2045,7 @@ class ViscoAcousticWave2D(LinearOperator):
         y = self._acoustic_rmatvec(x)
         return y
 
+
 class ViscoAcousticWave3D(LinearOperator):
     """Devito ViscoAcoustic propagator.
 
