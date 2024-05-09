@@ -1,5 +1,5 @@
 __all__ = ["AcousticWave2D", "AcousticWave3D", "ElasticWave2D",
-           "ElasticWave3D", "ViscoAcousticWave2D"]
+           "ElasticWave3D", "ViscoAcousticWave2D", "ViscoAcousticWave3D"]
 
 from typing import Tuple
 
@@ -654,12 +654,12 @@ class AcousticWave3D(LinearOperator):
         src_coordinates = np.empty((nsrc, 3))
         src_coordinates[:, 0] = src_x
         src_coordinates[:, 1] = src_y
-        src_coordinates[:, 2] = src_z
+        src_coordinates[:, -1] = src_z
 
         rec_coordinates = np.empty((nrec, 3))
         rec_coordinates[:, 0] = rec_x
         rec_coordinates[:, 1] = rec_y
-        rec_coordinates[:, 2] = rec_z
+        rec_coordinates[:, -1] = rec_z
 
         self.geometry = AcquisitionGeometry(
             self.model,
@@ -1951,6 +1951,319 @@ class ViscoAcousticWave2D(LinearOperator):
         rec_coordinates = np.empty((nrec, 2))
         rec_coordinates[:, 0] = rec_x
         rec_coordinates[:, 1] = rec_z
+
+        self.geometry = AcquisitionGeometry(
+            self.model,
+            rec_coordinates,
+            src_coordinates,
+            t0,
+            tn,
+            src_type=src_type,
+            f0=None if f0 is None else f0 * 1e-3,
+        )
+
+    def _fwd_oneshot(self, isrc: int, v: NDArray) -> NDArray:
+        """Forward modelling for one shot
+
+        Parameters
+        ----------
+        isrc : :obj:`int`
+            Index of source to model
+        v : :obj:`np.ndarray`
+            Velocity Model
+
+        Returns
+        -------
+        d : :obj:`np.ndarray`
+            Data
+
+        """
+        # create geometry for single source
+        geometry = AcquisitionGeometry(
+            self.model,
+            self.geometry.rec_positions,
+            self.geometry.src_positions[isrc, :],
+            self.geometry.t0,
+            self.geometry.tn,
+            f0=self.geometry.f0,
+            src_type=self.geometry.src_type,
+        )
+
+        # Update model.vp using data received as a parameter
+        initialize_function(self.model.vp, v * 1e-3, self.model.padsizes)
+
+        # solve
+        solver = ViscoacousticWaveSolver(
+            self.model,
+            geometry,
+            space_order=self.space_order,
+            kernel=self.kernel,
+            time_order=self.time_order,
+        )
+        d = solver.forward()[0]
+        d = d.resample(geometry.dt).data[:][: geometry.nt].T
+        return d
+
+    def _fwd_allshots(self, v: NDArray) -> NDArray:
+        """Forward modelling for all shots
+
+        Parameters
+        -----------
+        v : :obj:`np.ndarray`
+            Velocity Model
+
+        Returns
+        -------
+        dtot : :obj:`np.ndarray`
+            Data for all shots
+
+        """
+        nsrc = self.geometry.src_positions.shape[0]
+        dtot = []
+
+        for isrc in range(nsrc):
+            d = self._fwd_oneshot(isrc, v)
+            dtot.append(d)
+        dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
+        return dtot
+
+    def _adj_allshots(self, v: NDArray) -> NDArray:
+        raise Exception("Method not yet implemented")
+
+    def _register_multiplications(self, op_name: str) -> None:
+        if op_name == "fwd":
+            self._acoustic_matvec = self._fwd_allshots
+            self._acoustic_rmatvec = self._adj_allshots
+
+    @reshaped
+    def _matvec(self, x: NDArray) -> NDArray:
+        y = self._acoustic_matvec(x)
+        return y
+
+    @reshaped
+    def _rmatvec(self, x: NDArray) -> NDArray:
+        y = self._acoustic_rmatvec(x)
+        return y
+
+
+class ViscoAcousticWave3D(LinearOperator):
+    """Devito ViscoAcoustic propagator.
+
+    Parameters
+    ----------
+    shape : :obj:`tuple` or :obj:`numpy.ndarray`
+        Model shape ``(nx, nz)``
+    origin : :obj:`tuple` or :obj:`numpy.ndarray`
+        Model origin ``(ox, oz)``
+    spacing : :obj:`tuple` or  :obj:`numpy.ndarray`
+        Model spacing ``(dx, dz)``
+    vp : :obj:`numpy.ndarray`
+        Velocity model in m/s
+    qp : :obj:`numpy.ndarray
+        P-wave attenuation
+    b : :obj:`numpy.ndarray
+        Buoyancy
+    src_x : :obj:`numpy.ndarray`
+        Source x-coordinates in m
+    src_y : :obj:`numpy.ndarray`
+        Source y-coordinates in m
+    src_z : :obj:`numpy.ndarray` or :obj:`float`
+        Source z-coordinates in m
+    rec_x : :obj:`numpy.ndarray`
+        Receiver x-coordinates in m
+    rec_y : :obj:`numpy.ndarray`
+        Receiver y-coordinates in m
+    rec_z : :obj:`numpy.ndarray` or :obj:`float`
+        Receiver z-coordinates in m
+    t0 : :obj:`float`
+        Initial time
+    tn : :obj:`int`
+        Number of time samples
+    src_type : :obj:`str`
+        Source type
+    space_order : :obj:`int`, optional
+        Spatial ordering of FD stencil
+    kernel :
+        selects a visco-acoustic equation from the options below:
+                'sls' (Standard Linear Solid) :
+                1st order - Blanch and Symes (1995) / Dutta and Schuster (2014)
+                viscoacoustic equation
+                2nd order - Bai et al. (2014) viscoacoustic equation
+                'kv' - Ren et al. (2014) viscoacoustic equation
+                'maxwell' - Deng and McMechan (2007) viscoacoustic equation
+                Defaults to 'sls' 2nd order.
+    nbl : :obj:`int`, optional
+        Number ordering of samples in absorbing boundaries
+    f0 : :obj:`float`, optional
+        Source peak frequency (Hz)
+    checkpointing : :obj:`bool`, optional
+        Use checkpointing (``True``) or not (``False``). Note that
+        using checkpointing is needed when dealing with large models
+        but it will slow down computations
+    dtype : :obj:`str`, optional
+        Type of elements in input array.
+    name : :obj:`str`, optional
+        Name of operator (to be used by :func:`pylops.utils.describe.describe`)
+
+    Attributes
+    ----------
+    shape : :obj:`tuple`
+        Operator shape
+    explicit : :obj:`bool`
+        Operator contains a matrix that can be solved explicitly (``True``) or
+        not (``False``)
+
+    """
+
+    def __init__(
+        self,
+        shape: InputDimsLike,
+        origin: SamplingLike,
+        spacing: SamplingLike,
+        vp: NDArray,
+        qp: NDArray,
+        b: NDArray,
+        src_x: NDArray,
+        src_y: NDArray,
+        src_z: NDArray,
+        rec_x: NDArray,
+        rec_y: NDArray,
+        rec_z: NDArray,
+        t0: float,
+        tn: int,
+        src_type: str = "Ricker",
+        space_order: int = 6,
+        kernel: str = "sls",
+        time_order: int = 2,
+        nbl: int = 20,
+        f0: float = 20.0,
+        checkpointing: bool = False,
+        dtype: DTypeLike = "float32",
+        name: str = "A",
+        op_name: str = "fwd",
+    ) -> None:
+        if devito_message is not None:
+            raise NotImplementedError(devito_message)
+
+        # create model
+        self._create_model(shape, origin, spacing, vp, qp, b, space_order, nbl)
+        self._create_geometry(
+            src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0
+        )
+        self.checkpointing = checkpointing
+        self.kernel = kernel
+        self.time_order = time_order
+
+        super().__init__(
+            dtype=np.dtype(dtype),
+            dims=vp.shape,
+            dimsd=(len(src_x), len(rec_x), self.geometry.nt),
+            explicit=False,
+            name=name,
+        )
+        self._register_multiplications(op_name)
+
+    @staticmethod
+    def _crop_model(m: NDArray, nbl: int) -> NDArray:
+        """Remove absorbing boundaries from model"""
+        return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
+
+    def _create_model(
+        self,
+        shape: InputDimsLike,
+        origin: SamplingLike,
+        spacing: SamplingLike,
+        vp: NDArray,
+        qp: NDArray,
+        b: NDArray,
+        space_order: int = 6,
+        nbl: int = 20,
+    ) -> None:
+        """Create model
+
+        Parameters
+        ----------
+        shape : :obj:`numpy.ndarray`
+            Model shape ``(nx, nz)``
+        origin : :obj:`numpy.ndarray`
+            Model origin ``(ox, oz)``
+        spacing : :obj:`numpy.ndarray`
+            Model spacing ``(dx, dz)``
+        vp : :obj:`numpy.ndarray`
+            Velocity model in m/s
+        qp : :obj:`numpy.ndarray
+            P-wave attenuation
+        b : :obj:`numpy.ndarray
+            Buoyancy
+        space_order : :obj:`int`, optional
+            Spatial ordering of FD stencil
+        nbl : :obj:`int`, optional
+            Number ordering of samples in absorbing boundaries
+
+        """
+        self.space_order = space_order
+        self.model = Model(
+            space_order=space_order,
+            vp=vp * 1e-3,
+            qp=qp,
+            b=b,
+            origin=origin,
+            shape=shape,
+            dtype=np.float32,
+            spacing=spacing,
+            nbl=nbl,
+        )
+
+    def _create_geometry(
+        self,
+        src_x: NDArray,
+        src_y: NDArray,
+        src_z: NDArray,
+        rec_x: NDArray,
+        rec_y: NDArray,
+        rec_z: NDArray,
+        t0: float,
+        tn: int,
+        src_type: str,
+        f0: float = 20.0,
+    ) -> None:
+        """Create geometry and time axis
+
+        Parameters
+        ----------
+        src_x : :obj:`numpy.ndarray`
+            Source x-coordinates in m
+        src_y : :obj:`numpy.ndarray`
+            Source y-coordinates in m
+        src_z : :obj:`numpy.ndarray` or :obj:`float`
+            Source z-coordinates in m
+        rec_x : :obj:`numpy.ndarray`
+            Receiver x-coordinates in m
+        rec_y : :obj:`numpy.ndarray`
+            Receiver y-coordinates in m
+        rec_z : :obj:`numpy.ndarray` or :obj:`float`
+            Receiver z-coordinates in m
+        t0 : :obj:`float`
+            Initial time
+        tn : :obj:`int`
+            Number of time samples
+        src_type : :obj:`str`
+            Source type
+        f0 : :obj:`float`, optional
+            Source peak frequency (Hz)
+
+        """
+
+        nsrc, nrec = len(src_x), len(rec_x)
+        src_coordinates = np.empty((nsrc, 3))
+        src_coordinates[:, 0] = src_x
+        src_coordinates[:, 1] = src_y
+        src_coordinates[:, -1] = src_z
+
+        rec_coordinates = np.empty((nrec, 3))
+        rec_coordinates[:, 0] = rec_x
+        rec_coordinates[:, 1] = rec_y
+        rec_coordinates[:, -1] = rec_z
 
         self.geometry = AcquisitionGeometry(
             self.model,
