@@ -1600,6 +1600,9 @@ class ElasticWave3D(LinearOperator):
 
     """
 
+    _list_par = {'lam-mu': ['lam', 'mu', 'rho'], 'vp-vs-rho': ['vp', 'vs', 'rho'],
+                 'Ip-Is-rho': ['Ip', 'Is', 'rho']}
+
     def __init__(
         self,
         shape: InputDimsLike,
@@ -1639,9 +1642,10 @@ class ElasticWave3D(LinearOperator):
         self.karguments = {}
 
         num_outs = 4
+        n_input = 3
         super().__init__(
             dtype=np.dtype(dtype),
-            dims=vp.shape,
+            dims=(n_input, vp.shape[0], vp.shape[1], vp.shape[2]),
             dimsd=(num_outs, len(src_x), len(rec_x), self.geometry.nt),
             explicit=False,
             name=name,
@@ -1780,11 +1784,22 @@ class ElasticWave3D(LinearOperator):
             src_type=self.geometry.src_type,
         )
 
-        # Update model.vp using data received as a parameter
-        initialize_function(self.model.vp, v * 1e-3, self.model.padsizes)
-
         # If "par" was not provided as a parameter to forward execution, use the operator's default value
         self.karguments["par"] = self.karguments.get("par", self.par)
+
+        # get arguments that will be used for this elastic forward execution
+        args = self._list_par[self.karguments["par"]]
+
+        # create functions representing the physical parameters received as parameters
+        functions = [Function(name=name, grid=self.model.grid, space_order=self.model.space_order,
+                     parameter=True) for name in args]
+
+        # Assignment of values to physical parameters functions based on the values in 'v'
+        for function, value in zip(functions, v):
+            initialize_function(function, value, self.model.padsizes)
+
+        # Update 'karguments' to contain the values of the parameters defined in 'args'
+        self.karguments.update(dict(zip(args, functions)))
 
         # solve
         solver = IsoElasticWaveSolver(
@@ -1903,6 +1918,12 @@ class ElasticWave3D(LinearOperator):
             coordinates=src_coordinates,
             t0=t0,
         )
+
+    def __mul__(self, x: Union[float, LinearOperator]) -> LinearOperator:
+        # data must be a np.array
+        if not isinstance(x, np.ndarray):
+            x = np.array(x)
+        return super().dot(x)
 
     def add_args(self, **kwargs):
         self.karguments = kwargs
