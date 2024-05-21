@@ -105,6 +105,7 @@ class AcousticWave2D(LinearOperator):
         self._create_model(shape, origin, spacing, vp, space_order, nbl)
         self._create_geometry(src_x, src_z, rec_x, rec_z, t0, tn, src_type, f0=f0)
         self.checkpointing = checkpointing
+        self.karguments = {}
 
         super().__init__(
             dtype=np.dtype(dtype),
@@ -418,12 +419,9 @@ class AcousticWave2D(LinearOperator):
             src_type=self.geometry.src_type,
         )
 
-        # Update model.vp using data received as a parameter
-        initialize_function(self.model.vp, v * 1e-3, self.model.padsizes)
-
         # solve
         solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order)
-        d = solver.forward()[0]
+        d = solver.forward(**self.karguments)[0]
         d = d.resample(geometry.dt).data[:][: geometry.nt].T
         return d
 
@@ -456,6 +454,54 @@ class AcousticWave2D(LinearOperator):
         if op_name == "fwd":
             self._acoustic_matvec = self._fwd_allshots
         self._acoustic_rmatvec = self._bornadj_allshots
+
+    def create_receiver(self, name, rx=None, rz=None, t0=None, tn=None, dt=None):
+
+        tn = tn or self.geometry.tn
+        t0 = t0 or self.geometry.t0
+        dt = dt or self.model.critical_dt
+
+        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
+        rz = rz if rz is not None else self.geometry.rec_positions[:, 1]
+
+        nrec = len(rx)
+
+        rec_coordinates = np.empty((nrec, 2))
+        rec_coordinates[:, 0] = rx
+        rec_coordinates[:, 1] = rz
+
+        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
+        return Receiver(name=name, grid=self.geometry.grid,
+                        time_range=time_axis, npoint=nrec,
+                        coordinates=rec_coordinates)
+    
+    def create_source(self, name, sx=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None):
+
+        tn = tn or self.geometry.tn
+        t0 = t0 or self.geometry.t0
+        dt = dt or self.model.critical_dt
+        f0 = f0 or self.geometry.f0
+
+        src_type = src_type or self.geometry.src_type
+
+        sx = sx or self.geometry.src_positions[:, 0]
+        sz = sz or self.geometry.src_positions[:, 1]
+
+        nsrc = len(sx)
+
+        src_coordinates = np.empty((nsrc, 2))
+        src_coordinates[:, 0] = sx
+        src_coordinates[:, 1] = sz
+
+        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
+
+        return sources[src_type](name=name, grid=self.geometry.grid, f0=f0,
+                                 time_range=time_axis, npoint=nsrc,
+                                 coordinates=src_coordinates, t0=t0)
+    
+    def add_args(self, **kwargs):
+        # TODO: decide if this values will be manteined at the object or it will be resete after matvec's execution.
+        self.karguments = kwargs
 
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
@@ -556,6 +602,7 @@ class AcousticWave3D(LinearOperator):
             src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0
         )
         self.checkpointing = checkpointing
+        self.karguments = {}
 
         super().__init__(
             dtype=np.dtype(dtype),
@@ -881,12 +928,9 @@ class AcousticWave3D(LinearOperator):
             src_type=self.geometry.src_type,
         )
 
-        # Update model.vp using data received as a parameter
-        initialize_function(self.model.vp, v * 1e-3, self.model.padsizes)
-
         # solve
         solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order)
-        d = solver.forward()[0]
+        d = solver.forward(**self.karguments)[0]
         d = d.resample(geometry.dt).data[:][: geometry.nt].T
         return d
 
@@ -919,6 +963,57 @@ class AcousticWave3D(LinearOperator):
         if op_name == "fwd":
             self._acoustic_matvec = self._fwd_allshots
         self._acoustic_rmatvec = self._bornadj_allshots
+
+    def create_receiver(self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None):
+
+        tn = tn or self.geometry.tn
+        t0 = t0 or self.geometry.t0
+        dt = dt or self.model.critical_dt
+
+        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
+        ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
+        rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
+
+        nrec = len(rx)
+
+        rec_coordinates = np.empty((nrec, 3))
+        rec_coordinates[:, 0] = rx
+        rec_coordinates[:, 1] = ry
+        rec_coordinates[:, -1] = rz
+
+        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
+        return Receiver(name=name, grid=self.geometry.grid,
+                        time_range=time_axis, npoint=nrec,
+                        coordinates=rec_coordinates)
+
+    def create_source(self, name, sx=None, sy=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None):
+
+        tn = tn or self.geometry.tn
+        t0 = t0 or self.geometry.t0
+        dt = dt or self.model.critical_dt
+        f0 = f0 or self.geometry.f0
+
+        src_type = src_type or self.geometry.src_type
+
+        sx = sx or self.geometry.src_positions[:, 0]
+        sy = sy or self.geometry.src_positions[:, 1]
+        sz = sz or self.geometry.src_positions[:, -1]
+
+        nsrc = len(sx)
+
+        src_coordinates = np.empty((nsrc, 3))
+        src_coordinates[:, 0] = sx
+        src_coordinates[:, 1] = sy
+        src_coordinates[:, -1] = sz
+
+        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
+
+        return sources[src_type](name=name, grid=self.geometry.grid, f0=f0,
+                                 time_range=time_axis, npoint=nsrc,
+                                 coordinates=src_coordinates, t0=t0)
+
+    def add_args(self, **kwargs):
+        self.karguments = kwargs
 
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
