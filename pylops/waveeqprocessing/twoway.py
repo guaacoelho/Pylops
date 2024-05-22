@@ -1,7 +1,13 @@
-__all__ = ["AcousticWave2D", "AcousticWave3D", "ElasticWave2D",
-           "ElasticWave3D", "ViscoAcousticWave2D", "ViscoAcousticWave3D"]
+__all__ = [
+    "AcousticWave2D",
+    "AcousticWave3D",
+    "ElasticWave2D",
+    "ElasticWave3D",
+    "ViscoAcousticWave2D",
+    "ViscoAcousticWave3D",
+]
 
-from typing import Tuple
+from typing import Tuple, Union
 
 import numpy as np
 
@@ -9,20 +15,19 @@ from pylops import LinearOperator
 from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
-from typing import Union
 
 devito_message = deps.devito_import("the twoway module")
 
 if devito_message is None:
+    from devito import Function
     from devito.builtins import initialize_function
 
-    from devito import Function
     from examples.seismic import AcquisitionGeometry, Model, Receiver
     from examples.seismic.acoustic import AcousticWaveSolver
-    from examples.seismic.stiffness import ISOSeismicModel, IsoElasticWaveSolver
-    from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
     from examples.seismic.source import TimeAxis
+    from examples.seismic.stiffness import IsoElasticWaveSolver, ISOSeismicModel
     from examples.seismic.utils import sources
+    from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
 
 
 class AcousticWave2D(LinearOperator):
@@ -471,11 +476,17 @@ class AcousticWave2D(LinearOperator):
         rec_coordinates[:, 1] = rz
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(name=name, grid=self.geometry.grid,
-                        time_range=time_axis, npoint=nrec,
-                        coordinates=rec_coordinates)
-    
-    def create_source(self, name, sx=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None):
+        return Receiver(
+            name=name,
+            grid=self.geometry.grid,
+            time_range=time_axis,
+            npoint=nrec,
+            coordinates=rec_coordinates,
+        )
+
+    def create_source(
+        self, name, sx=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None
+    ):
 
         tn = tn or self.geometry.tn
         t0 = t0 or self.geometry.t0
@@ -495,10 +506,16 @@ class AcousticWave2D(LinearOperator):
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
 
-        return sources[src_type](name=name, grid=self.geometry.grid, f0=f0,
-                                 time_range=time_axis, npoint=nsrc,
-                                 coordinates=src_coordinates, t0=t0)
-    
+        return sources[src_type](
+            name=name,
+            grid=self.geometry.grid,
+            f0=f0,
+            time_range=time_axis,
+            npoint=nsrc,
+            coordinates=src_coordinates,
+            t0=t0,
+        )
+
     def add_args(self, **kwargs):
         self.karguments = kwargs
 
@@ -963,7 +980,9 @@ class AcousticWave3D(LinearOperator):
             self._acoustic_matvec = self._fwd_allshots
         self._acoustic_rmatvec = self._bornadj_allshots
 
-    def create_receiver(self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None):
+    def create_receiver(
+        self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
+    ):
 
         tn = tn or self.geometry.tn
         t0 = t0 or self.geometry.t0
@@ -981,11 +1000,26 @@ class AcousticWave3D(LinearOperator):
         rec_coordinates[:, -1] = rz
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(name=name, grid=self.geometry.grid,
-                        time_range=time_axis, npoint=nrec,
-                        coordinates=rec_coordinates)
+        return Receiver(
+            name=name,
+            grid=self.geometry.grid,
+            time_range=time_axis,
+            npoint=nrec,
+            coordinates=rec_coordinates,
+        )
 
-    def create_source(self, name, sx=None, sy=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None):
+    def create_source(
+        self,
+        name,
+        sx=None,
+        sy=None,
+        sz=None,
+        t0=None,
+        tn=None,
+        dt=None,
+        f0=None,
+        src_type=None,
+    ):
 
         tn = tn or self.geometry.tn
         t0 = t0 or self.geometry.t0
@@ -1007,9 +1041,15 @@ class AcousticWave3D(LinearOperator):
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
 
-        return sources[src_type](name=name, grid=self.geometry.grid, f0=f0,
-                                 time_range=time_axis, npoint=nsrc,
-                                 coordinates=src_coordinates, t0=t0)
+        return sources[src_type](
+            name=name,
+            grid=self.geometry.grid,
+            f0=f0,
+            time_range=time_axis,
+            npoint=nsrc,
+            coordinates=src_coordinates,
+            t0=t0,
+        )
 
     def add_args(self, **kwargs):
         self.karguments = kwargs
@@ -1077,8 +1117,11 @@ class ElasticWave2D(LinearOperator):
 
     """
 
-    _list_par = {'lam-mu': ['lam', 'mu', 'rho'], 'vp-vs-rho': ['vp', 'vs', 'rho'],
-                 'Ip-Is-rho': ['Ip', 'Is', 'rho']}
+    _list_par = {
+        "lam-mu": ["lam", "mu", "rho"],
+        "vp-vs-rho": ["vp", "vs", "rho"],
+        "Ip-Is-rho": ["Ip", "Is", "rho"],
+    }
 
     def __init__(
         self,
@@ -1261,8 +1304,15 @@ class ElasticWave2D(LinearOperator):
         args = self._list_par[self.karguments["par"]]
 
         # create functions representing the physical parameters received as parameters
-        functions = [Function(name=name, grid=self.model.grid, space_order=self.model.space_order,
-                     parameter=True) for name in args]
+        functions = [
+            Function(
+                name=name,
+                grid=self.model.grid,
+                space_order=self.model.space_order,
+                parameter=True,
+            )
+            for name in args
+        ]
 
         # Assignment of values to physical parameters functions based on the values in 'v'
         for function, value in zip(functions, v):
@@ -1271,7 +1321,9 @@ class ElasticWave2D(LinearOperator):
         # Update 'karguments' to contain the values of the parameters defined in 'args'
         self.karguments.update(dict(zip(args, functions)))
 
-        solver = IsoElasticWaveSolver(self.model, geometry, space_order=self.space_order)
+        solver = IsoElasticWaveSolver(
+            self.model, geometry, space_order=self.space_order
+        )
         rec_data = list(solver.forward(**self.karguments)[0:3])
 
         for ii, d in enumerate(rec_data):
@@ -1337,7 +1389,9 @@ class ElasticWave2D(LinearOperator):
         rec_vz = self.geometry.rec.copy()
         rec_vz.data[:] = dobs[2].T[:]
 
-        solver = IsoElasticWaveSolver(self.model, geometry, space_order=self.space_order)
+        solver = IsoElasticWaveSolver(
+            self.model, geometry, space_order=self.space_order
+        )
 
         # If "par" was not passed as a parameter to forward execution, use the operator's default value
         self.karguments["par"] = self.karguments.get("par", self.par)
@@ -1415,11 +1469,17 @@ class ElasticWave2D(LinearOperator):
         rec_coordinates[:, 1] = rz
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(name=name, grid=self.geometry.grid,
-                        time_range=time_axis, npoint=nrec,
-                        coordinates=rec_coordinates)
+        return Receiver(
+            name=name,
+            grid=self.geometry.grid,
+            time_range=time_axis,
+            npoint=nrec,
+            coordinates=rec_coordinates,
+        )
 
-    def create_source(self, name, sx=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None):
+    def create_source(
+        self, name, sx=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None
+    ):
 
         tn = tn or self.geometry.tn
         t0 = t0 or self.geometry.t0
@@ -1439,9 +1499,15 @@ class ElasticWave2D(LinearOperator):
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
 
-        return sources[src_type](name=name, grid=self.geometry.grid, f0=f0,
-                                 time_range=time_axis, npoint=nsrc,
-                                 coordinates=src_coordinates, t0=t0)
+        return sources[src_type](
+            name=name,
+            grid=self.geometry.grid,
+            f0=f0,
+            time_range=time_axis,
+            npoint=nsrc,
+            coordinates=src_coordinates,
+            t0=t0,
+        )
 
     def add_args(self, **kwargs):
         # TODO: decide if this values will be manteined at the object or it will be resete after matvec's execution.
@@ -1565,7 +1631,9 @@ class ElasticWave3D(LinearOperator):
 
         # create model
         self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl)
-        self._create_geometry(src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0)
+        self._create_geometry(
+            src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0
+        )
         self.checkpointing = checkpointing
         self.par = par
         self.karguments = {}
@@ -1719,7 +1787,9 @@ class ElasticWave3D(LinearOperator):
         self.karguments["par"] = self.karguments.get("par", self.par)
 
         # solve
-        solver = IsoElasticWaveSolver(self.model, geometry, space_order=self.space_order)
+        solver = IsoElasticWaveSolver(
+            self.model, geometry, space_order=self.space_order
+        )
         rec_data = list(solver.forward(**self.karguments)[0:4])
 
         for ii, d in enumerate(rec_data):
@@ -1763,7 +1833,9 @@ class ElasticWave3D(LinearOperator):
         else:
             raise Exception("The operator's name '%s' is not valid." % op_name)
 
-    def create_receiver(self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None):
+    def create_receiver(
+        self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
+    ):
 
         tn = tn or self.geometry.tn
         t0 = t0 or self.geometry.t0
@@ -1781,11 +1853,26 @@ class ElasticWave3D(LinearOperator):
         rec_coordinates[:, -1] = rz
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(name=name, grid=self.geometry.grid,
-                        time_range=time_axis, npoint=nrec,
-                        coordinates=rec_coordinates)
+        return Receiver(
+            name=name,
+            grid=self.geometry.grid,
+            time_range=time_axis,
+            npoint=nrec,
+            coordinates=rec_coordinates,
+        )
 
-    def create_source(self, name, sx=None, sy=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None):
+    def create_source(
+        self,
+        name,
+        sx=None,
+        sy=None,
+        sz=None,
+        t0=None,
+        tn=None,
+        dt=None,
+        f0=None,
+        src_type=None,
+    ):
 
         tn = tn or self.geometry.tn
         t0 = t0 or self.geometry.t0
@@ -1807,9 +1894,15 @@ class ElasticWave3D(LinearOperator):
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
 
-        return sources[src_type](name=name, grid=self.geometry.grid, f0=f0,
-                                 time_range=time_axis, npoint=nsrc,
-                                 coordinates=src_coordinates, t0=t0)
+        return sources[src_type](
+            name=name,
+            grid=self.geometry.grid,
+            f0=f0,
+            time_range=time_axis,
+            npoint=nsrc,
+            coordinates=src_coordinates,
+            t0=t0,
+        )
 
     def add_args(self, **kwargs):
         self.karguments = kwargs
@@ -2143,11 +2236,17 @@ class ViscoAcousticWave2D(LinearOperator):
         rec_coordinates[:, 1] = rz
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(name=name, grid=self.geometry.grid,
-                        time_range=time_axis, npoint=nrec,
-                        coordinates=rec_coordinates)
-    
-    def create_source(self, name, sx=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None):
+        return Receiver(
+            name=name,
+            grid=self.geometry.grid,
+            time_range=time_axis,
+            npoint=nrec,
+            coordinates=rec_coordinates,
+        )
+
+    def create_source(
+        self, name, sx=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None
+    ):
 
         tn = tn or self.geometry.tn
         t0 = t0 or self.geometry.t0
@@ -2167,10 +2266,16 @@ class ViscoAcousticWave2D(LinearOperator):
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
 
-        return sources[src_type](name=name, grid=self.geometry.grid, f0=f0,
-                                 time_range=time_axis, npoint=nsrc,
-                                 coordinates=src_coordinates, t0=t0)
-    
+        return sources[src_type](
+            name=name,
+            grid=self.geometry.grid,
+            f0=f0,
+            time_range=time_axis,
+            npoint=nsrc,
+            coordinates=src_coordinates,
+            t0=t0,
+        )
+
     def add_args(self, **kwargs):
         self.karguments = kwargs
 
@@ -2485,7 +2590,9 @@ class ViscoAcousticWave3D(LinearOperator):
             self._acoustic_matvec = self._fwd_allshots
             self._acoustic_rmatvec = self._adj_allshots
 
-    def create_receiver(self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None):
+    def create_receiver(
+        self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
+    ):
 
         tn = tn or self.geometry.tn
         t0 = t0 or self.geometry.t0
@@ -2503,11 +2610,26 @@ class ViscoAcousticWave3D(LinearOperator):
         rec_coordinates[:, -1] = rz
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(name=name, grid=self.geometry.grid,
-                        time_range=time_axis, npoint=nrec,
-                        coordinates=rec_coordinates)
+        return Receiver(
+            name=name,
+            grid=self.geometry.grid,
+            time_range=time_axis,
+            npoint=nrec,
+            coordinates=rec_coordinates,
+        )
 
-    def create_source(self, name, sx=None, sy=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None):
+    def create_source(
+        self,
+        name,
+        sx=None,
+        sy=None,
+        sz=None,
+        t0=None,
+        tn=None,
+        dt=None,
+        f0=None,
+        src_type=None,
+    ):
 
         tn = tn or self.geometry.tn
         t0 = t0 or self.geometry.t0
@@ -2529,9 +2651,15 @@ class ViscoAcousticWave3D(LinearOperator):
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
 
-        return sources[src_type](name=name, grid=self.geometry.grid, f0=f0,
-                                 time_range=time_axis, npoint=nsrc,
-                                 coordinates=src_coordinates, t0=t0)
+        return sources[src_type](
+            name=name,
+            grid=self.geometry.grid,
+            f0=f0,
+            time_range=time_axis,
+            npoint=nsrc,
+            coordinates=src_coordinates,
+            t0=t0,
+        )
 
     def add_args(self, **kwargs):
         self.karguments = kwargs
