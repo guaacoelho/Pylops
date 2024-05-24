@@ -1790,14 +1790,6 @@ class _ViscoAcousticWave(LinearOperator):
         if devito_message is not None:
             raise NotImplementedError(devito_message)
 
-        if len(shape) == 2 and (src_y is not None or rec_y is not None):
-            raise Exception("Attempting to create a 2D operator with src_y or rec_y!")
-
-        if len(shape) == 3 and (src_y is None or rec_y is None):
-            raise Exception(
-                "Attempting to create a 3D operator without src_y or rec_y!"
-            )
-
         # create model
         self._create_model(shape, origin, spacing, vp, qp, b, space_order, nbl)
         self._create_geometry(
@@ -1907,13 +1899,13 @@ class _ViscoAcousticWave(LinearOperator):
         src_coordinates = np.empty((nsrc, self.model.dim))
         src_coordinates[:, 0] = src_x
         src_coordinates[:, -1] = src_z
+        if self.model.dim == 3:
+            src_coordinates[:, 1] = src_y
 
         rec_coordinates = np.empty((nrec, self.model.dim))
         rec_coordinates[:, 0] = rec_x
         rec_coordinates[:, -1] = rec_z
-
         if self.model.dim == 3:
-            src_coordinates[:, 1] = src_y
             rec_coordinates[:, 1] = rec_y
 
         self.geometry = AcquisitionGeometry(
