@@ -1,5 +1,6 @@
 __all__ = [
-    "AcousticWave",
+    "AcousticWave2D",
+    "AcousticWave3D",
     "ElasticWave2D",
     "ElasticWave3D",
     "ViscoAcousticWave",
@@ -28,7 +29,7 @@ if devito_message is None:
     from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
 
 
-class AcousticWave(LinearOperator):
+class _AcousticWave(LinearOperator):
     """Devito Acoustic propagator.
 
     Parameters
@@ -110,14 +111,6 @@ class AcousticWave(LinearOperator):
         if devito_message is not None:
             raise NotImplementedError(devito_message)
 
-        if len(shape) == 2 and (src_y is not None or rec_y is not None):
-            raise Exception("Attempting to create a 2D operator with src_y or rec_y!")
-
-        if len(shape) == 3 and (src_y is None or rec_y is None):
-            raise Exception(
-                "Attempting to create a 3D operator without src_y or rec_y!"
-            )
-
         # create model
         self._create_model(shape, origin, spacing, vp, space_order, nbl)
         self._create_geometry(
@@ -138,7 +131,10 @@ class AcousticWave(LinearOperator):
     @staticmethod
     def _crop_model(m: NDArray, nbl: int) -> NDArray:
         """Remove absorbing boundaries from model"""
-        return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
+        if m.ndim < 3:
+            return m[nbl:-nbl, nbl:-nbl]
+        else:
+            return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
 
     def _create_model(
         self,
@@ -585,6 +581,110 @@ class AcousticWave(LinearOperator):
     def _rmatvec(self, x: NDArray) -> NDArray:
         y = self._acoustic_rmatvec(x)
         return y
+
+
+class AcousticWave2D(_AcousticWave):
+    def __init__(
+        self,
+        shape: InputDimsLike,
+        origin: SamplingLike,
+        spacing: SamplingLike,
+        vp: NDArray,
+        src_x: NDArray,
+        src_z: NDArray,
+        rec_x: NDArray,
+        rec_z: NDArray,
+        t0: float,
+        tn: int,
+        src_type: str = "Ricker",
+        space_order: int = 6,
+        nbl: int = 20,
+        f0: float = 20.0,
+        checkpointing: bool = False,
+        dtype: DTypeLike = "float32",
+        name: str = "A",
+        op_name: str = "born",
+    ) -> None:
+
+        if len(shape) > 2:
+            raise Exception(
+                "Attempting to create a 3D operator using a 2D intended class!"
+            )
+
+        super().__init__(
+            shape=shape,
+            origin=origin,
+            spacing=spacing,
+            vp=vp,
+            src_x=src_x,
+            src_z=src_z,
+            rec_x=rec_x,
+            rec_z=rec_z,
+            t0=t0,
+            tn=tn,
+            src_type=src_type,
+            space_order=space_order,
+            nbl=nbl,
+            f0=f0,
+            checkpointing=checkpointing,
+            dtype=dtype,
+            name=name,
+            op_name=op_name,
+        )
+
+
+class AcousticWave3D(_AcousticWave):
+    def __init__(
+        self,
+        shape: InputDimsLike,
+        origin: SamplingLike,
+        spacing: SamplingLike,
+        vp: NDArray,
+        src_x: NDArray,
+        src_y: NDArray,
+        src_z: NDArray,
+        rec_x: NDArray,
+        rec_y: NDArray,
+        rec_z: NDArray,
+        t0: float,
+        tn: int,
+        src_type: str = "Ricker",
+        space_order: int = 6,
+        nbl: int = 20,
+        f0: float = 20.0,
+        checkpointing: bool = False,
+        dtype: DTypeLike = "float32",
+        name: str = "A",
+        op_name: str = "born",
+    ) -> None:
+
+        if len(shape) < 3:
+            raise Exception(
+                "Attempting to create a 3D operator with a 2D intended class!"
+            )
+
+        super().__init__(
+            shape=shape,
+            origin=origin,
+            spacing=spacing,
+            vp=vp,
+            src_x=src_x,
+            src_y=src_y,
+            src_z=src_z,
+            rec_x=rec_x,
+            rec_y=rec_y,
+            rec_z=rec_z,
+            t0=t0,
+            tn=tn,
+            src_type=src_type,
+            space_order=space_order,
+            nbl=nbl,
+            f0=f0,
+            checkpointing=checkpointing,
+            dtype=dtype,
+            name=name,
+            op_name=op_name,
+        )
 
 
 class ElasticWave2D(LinearOperator):

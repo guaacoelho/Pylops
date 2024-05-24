@@ -8,7 +8,7 @@ from scipy.sparse.linalg import lsqr
 from pylops.utils import dottest as Dottest
 from pylops.utils.typing import NDArray
 from pylops.waveeqprocessing.kirchhoff import Kirchhoff
-from pylops.waveeqprocessing.twoway import AcousticWave
+from pylops.waveeqprocessing.twoway import AcousticWave2D
 
 logging.basicConfig(format="%(levelname)s: %(message)s", level=logging.WARNING)
 
@@ -56,7 +56,7 @@ class LSM:
     See Also
     --------
     pylops.waveeqprocessing.Kirchhoff : Kirchhoff operator
-    pylops.waveeqprocessing.AcousticWave : AcousticWave operator
+    pylops.waveeqprocessing.AcousticWave2D : AcousticWave2D operator
 
     Notes
     -----
@@ -77,7 +77,7 @@ class LSM:
 
     - Born LSM: this problem is parametrized in terms of squared slowness perturbation
       (in the constant density case) and it is solved using an acoustic two-way eave equation
-      modelling engine (see :class:`pylops.waveeqprocessing.AcousticWave`).
+      modelling engine (see :class:`pylops.waveeqprocessing.AcousticWave2D`).
 
     The following table shows the current status of the LSM application:
 
@@ -121,7 +121,7 @@ class LSM:
             shape = (len(x), len(z))
             origin = (x[0], z[0])
             spacing = (x[1] - x[0], z[1] - z[0])
-            self.Demop = AcousticWave(
+            self.Demop = AcousticWave2D(
                 shape,
                 origin,
                 spacing,
