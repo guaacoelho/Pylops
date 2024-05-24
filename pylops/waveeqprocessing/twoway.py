@@ -3,7 +3,8 @@ __all__ = [
     "AcousticWave3D",
     "ElasticWave2D",
     "ElasticWave3D",
-    "ViscoAcousticWave",
+    "ViscoAcousticWave2D",
+    "ViscoAcousticWave3D",
 ]
 
 from typing import Tuple, Union
@@ -1222,8 +1223,11 @@ class ElasticWave3D(LinearOperator):
 
     """
 
-    _list_par = {'lam-mu': ['lam', 'mu', 'rho'], 'vp-vs-rho': ['vp', 'vs', 'rho'],
-                 'Ip-Is-rho': ['Ip', 'Is', 'rho']}
+    _list_par = {
+        "lam-mu": ["lam", "mu", "rho"],
+        "vp-vs-rho": ["vp", "vs", "rho"],
+        "Ip-Is-rho": ["Ip", "Is", "rho"],
+    }
 
     def __init__(
         self,
@@ -1418,8 +1422,15 @@ class ElasticWave3D(LinearOperator):
         args = self._list_par[self.karguments["par"]]
 
         # create functions representing the physical parameters received as parameters
-        functions = [Function(name=name, grid=self.model.grid, space_order=self.model.space_order,
-                     parameter=True) for name in args]
+        functions = [
+            Function(
+                name=name,
+                grid=self.model.grid,
+                space_order=self.model.space_order,
+                parameter=True,
+            )
+            for name in args
+        ]
 
         # Assignment of values to physical parameters functions based on the values in 'v'
         for function, value in zip(functions, v):
@@ -1500,7 +1511,9 @@ class ElasticWave3D(LinearOperator):
         rec_vz = self.geometry.rec.copy()
         rec_vz.data[:] = dobs[3].T[:]
 
-        solver = IsoElasticWaveSolver(self.model, geometry, space_order=self.space_order)
+        solver = IsoElasticWaveSolver(
+            self.model, geometry, space_order=self.space_order
+        )
 
         # If "par" was not passed as a parameter to forward execution, use the operator's default value
         self.karguments["par"] = self.karguments.get("par", self.par)
@@ -1513,7 +1526,12 @@ class ElasticWave3D(LinearOperator):
             u0 = solver.forward(save=True, par=par)[4]
 
         grad1, grad2, grad3 = solver.jacobian_adjoint(
-            rec_vx, rec_vz, u0, rec_vy=rec_vy, checkpointing=self.checkpointing, **self.karguments
+            rec_vx,
+            rec_vz,
+            u0,
+            rec_vy=rec_vy,
+            checkpointing=self.checkpointing,
+            **self.karguments
         )[0:3]
 
         return grad1, grad2, grad3
@@ -1670,7 +1688,7 @@ class ElasticWave3D(LinearOperator):
         return y
 
 
-class ViscoAcousticWave(LinearOperator):
+class _ViscoAcousticWave(LinearOperator):
     """Devito ViscoAcoustic propagator.
 
     Parameters
@@ -2071,3 +2089,123 @@ class ViscoAcousticWave(LinearOperator):
     def _rmatvec(self, x: NDArray) -> NDArray:
         y = self._acoustic_rmatvec(x)
         return y
+
+
+class ViscoAcousticWave2D(_ViscoAcousticWave):
+    def __init__(
+        self,
+        shape: InputDimsLike,
+        origin: SamplingLike,
+        spacing: SamplingLike,
+        vp: NDArray,
+        qp: NDArray,
+        b: NDArray,
+        src_x: NDArray,
+        src_z: NDArray,
+        rec_x: NDArray,
+        rec_z: NDArray,
+        t0: float,
+        tn: int,
+        src_type: str = "Ricker",
+        space_order: int = 6,
+        kernel: str = "sls",
+        time_order: int = 2,
+        nbl: int = 20,
+        f0: float = 20.0,
+        checkpointing: bool = False,
+        dtype: DTypeLike = "float32",
+        name: str = "A",
+        op_name: str = "fwd",
+    ) -> None:
+
+        if len(shape) > 2:
+            raise Exception(
+                "Attempting to create a 3D operator using a 2D intended class!"
+            )
+
+        super().__init__(
+            shape=shape,
+            origin=origin,
+            spacing=spacing,
+            vp=vp,
+            qp=qp,
+            b=b,
+            src_x=src_x,
+            src_z=src_z,
+            rec_x=rec_x,
+            rec_z=rec_z,
+            t0=t0,
+            tn=tn,
+            src_type=src_type,
+            space_order=space_order,
+            kernel=kernel,
+            time_order=time_order,
+            nbl=nbl,
+            f0=f0,
+            checkpointing=checkpointing,
+            dtype=dtype,
+            name=name,
+            op_name=op_name,
+        )
+
+
+class ViscoAcousticWave3D(_ViscoAcousticWave):
+    def __init__(
+        self,
+        shape: InputDimsLike,
+        origin: SamplingLike,
+        spacing: SamplingLike,
+        vp: NDArray,
+        qp: NDArray,
+        b: NDArray,
+        src_x: NDArray,
+        src_y: NDArray,
+        src_z: NDArray,
+        rec_x: NDArray,
+        rec_y: NDArray,
+        rec_z: NDArray,
+        t0: float,
+        tn: int,
+        src_type: str = "Ricker",
+        space_order: int = 6,
+        kernel: str = "sls",
+        time_order: int = 2,
+        nbl: int = 20,
+        f0: float = 20.0,
+        checkpointing: bool = False,
+        dtype: DTypeLike = "float32",
+        name: str = "A",
+        op_name: str = "fwd",
+    ) -> None:
+
+        if len(shape) < 3:
+            raise Exception(
+                "Attempting to create a 2D operator with a 3D intended class!"
+            )
+
+        super().__init__(
+            shape=shape,
+            origin=origin,
+            spacing=spacing,
+            vp=vp,
+            qp=qp,
+            b=b,
+            src_x=src_x,
+            src_y=src_y,
+            src_z=src_z,
+            rec_x=rec_x,
+            rec_y=rec_y,
+            rec_z=rec_z,
+            t0=t0,
+            tn=tn,
+            src_type=src_type,
+            space_order=space_order,
+            kernel=kernel,
+            time_order=time_order,
+            nbl=nbl,
+            f0=f0,
+            checkpointing=checkpointing,
+            dtype=dtype,
+            name=name,
+            op_name=op_name,
+        )
