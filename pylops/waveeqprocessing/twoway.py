@@ -129,14 +129,6 @@ class _AcousticWave(LinearOperator):
         )
         self._register_multiplications(op_name)
 
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        if m.ndim < 3:
-            return m[nbl:-nbl, nbl:-nbl]
-        else:
-            return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
-
     def _create_model(
         self,
         shape: InputDimsLike,
@@ -220,13 +212,13 @@ class _AcousticWave(LinearOperator):
         src_coordinates = np.empty((nsrc, self.model.dim))
         src_coordinates[:, 0] = src_x
         src_coordinates[:, -1] = src_z
+        if self.model.dim == 3:
+            src_coordinates[:, 1] = src_y
 
         rec_coordinates = np.empty((nrec, self.model.dim))
         rec_coordinates[:, 0] = rec_x
         rec_coordinates[:, -1] = rec_z
-
         if self.model.dim == 3:
-            src_coordinates[:, 1] = src_y
             rec_coordinates[:, 1] = rec_y
 
         self.geometry = AcquisitionGeometry(
@@ -322,7 +314,7 @@ class _AcousticWave(LinearOperator):
 
         # set perturbation
         dmext = np.zeros(self.model.grid.shape, dtype=np.float32)
-        if dmext.ndim < 3:
+        if dmext.ndim == 2:
             dmext[
                 self.model.nbl : -self.model.nbl,
                 self.model.nbl : -self.model.nbl,
@@ -494,6 +486,8 @@ class _AcousticWave(LinearOperator):
     def create_receiver(
         self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
     ):
+        if self.model.dim == 2 and ry is not None:
+            raise Exception("Attempting to create 3D receiver for a 2D operator!")
 
         tn = tn or self.geometry.tn
         t0 = t0 or self.geometry.t0
@@ -501,18 +495,16 @@ class _AcousticWave(LinearOperator):
 
         rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
         rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
+        if self.model.dim == 3:
+            ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
 
         nrec = len(rx)
 
         rec_coordinates = np.empty((nrec, self.model.dim))
         rec_coordinates[:, 0] = rx
         rec_coordinates[:, -1] = rz
-
         if self.model.dim == 3:
-            ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
             rec_coordinates[:, 1] = ry
-        elif ry is not None:
-            raise Exception("Attempting to create 3D receiver for a 2D operator!")
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
         return Receiver(
@@ -536,6 +528,9 @@ class _AcousticWave(LinearOperator):
         src_type=None,
     ):
 
+        if self.model.dim == 2 and sy is not None:
+            raise Exception("Attempting to create 3D source for a 2D operator!")
+
         tn = tn or self.geometry.tn
         t0 = t0 or self.geometry.t0
         dt = dt or self.model.critical_dt
@@ -545,18 +540,16 @@ class _AcousticWave(LinearOperator):
 
         sx = sx or self.geometry.src_positions[:, 0]
         sz = sz or self.geometry.src_positions[:, -1]
+        if self.model.dim == 3:
+            sy = sy or self.geometry.src_positions[:, 1]
 
         nsrc = len(sx)
 
         src_coordinates = np.empty((nsrc, 3))
         src_coordinates[:, 0] = sx
         src_coordinates[:, -1] = sz
-
         if self.model.dim == 3:
-            sy = sy or self.geometry.src_positions[:, 1]
             src_coordinates[:, 1] = sy
-        elif sy is not None:
-            raise Exception("Attempting to create 3D source for a 2D operator!")
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
 
@@ -607,7 +600,7 @@ class AcousticWave2D(_AcousticWave):
         op_name: str = "born",
     ) -> None:
 
-        if len(shape) > 2:
+        if len(shape) != 2:
             raise Exception(
                 "Attempting to create a 3D operator using a 2D intended class!"
             )
@@ -632,6 +625,11 @@ class AcousticWave2D(_AcousticWave):
             name=name,
             op_name=op_name,
         )
+
+    @staticmethod
+    def _crop_model(m: NDArray, nbl: int) -> NDArray:
+        """Remove absorbing boundaries from model"""
+        return m[nbl:-nbl, nbl:-nbl]
 
 
 class AcousticWave3D(_AcousticWave):
@@ -659,7 +657,7 @@ class AcousticWave3D(_AcousticWave):
         op_name: str = "born",
     ) -> None:
 
-        if len(shape) < 3:
+        if len(shape) != 3:
             raise Exception(
                 "Attempting to create a 3D operator with a 2D intended class!"
             )
@@ -686,6 +684,11 @@ class AcousticWave3D(_AcousticWave):
             name=name,
             op_name=op_name,
         )
+
+    @staticmethod
+    def _crop_model(m: NDArray, nbl: int) -> NDArray:
+        """Remove absorbing boundaries from model"""
+        return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
 
 
 class ElasticWave2D(LinearOperator):
@@ -1814,11 +1817,6 @@ class _ViscoAcousticWave(LinearOperator):
         )
         self._register_multiplications(op_name)
 
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
-
     def _create_model(
         self,
         shape: InputDimsLike,
@@ -2002,24 +2000,25 @@ class _ViscoAcousticWave(LinearOperator):
         self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
     ):
 
+        if self.model.dim == 2 and ry is not None:
+            raise Exception("Attempting to create 3D receiver for a 2D operator!")
+
         tn = tn or self.geometry.tn
         t0 = t0 or self.geometry.t0
         dt = dt or self.model.critical_dt
 
         rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
         rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
+        if self.model.dim == 3:
+            ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
 
         nrec = len(rx)
 
         rec_coordinates = np.empty((nrec, 3))
         rec_coordinates[:, 0] = rx
         rec_coordinates[:, -1] = rz
-
         if self.model.dim == 3:
-            ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
             rec_coordinates[:, 1] = ry
-        elif ry is not None:
-            raise Exception("Attempting to create 3D receiver for a 2D operator!")
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
         return Receiver(
@@ -2043,6 +2042,9 @@ class _ViscoAcousticWave(LinearOperator):
         src_type=None,
     ):
 
+        if self.model.dim == 2 and sy is not None:
+            raise Exception("Attempting to create 3D source for a 2D operator!")
+
         tn = tn or self.geometry.tn
         t0 = t0 or self.geometry.t0
         dt = dt or self.model.critical_dt
@@ -2052,18 +2054,16 @@ class _ViscoAcousticWave(LinearOperator):
 
         sx = sx or self.geometry.src_positions[:, 0]
         sz = sz or self.geometry.src_positions[:, -1]
+        if self.model.dim == 3:
+            sy = sy or self.geometry.src_positions[:, 1]
 
         nsrc = len(sx)
 
         src_coordinates = np.empty((nsrc, 3))
         src_coordinates[:, 0] = sx
         src_coordinates[:, -1] = sz
-
         if self.model.dim == 3:
-            sy = sy or self.geometry.src_positions[:, 1]
             src_coordinates[:, 1] = sy
-        elif sy is not None:
-            raise Exception("Attempting to create 3D source for a 2D operator!")
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
 
@@ -2118,7 +2118,7 @@ class ViscoAcousticWave2D(_ViscoAcousticWave):
         op_name: str = "fwd",
     ) -> None:
 
-        if len(shape) > 2:
+        if len(shape) != 2:
             raise Exception(
                 "Attempting to create a 3D operator using a 2D intended class!"
             )
@@ -2147,6 +2147,11 @@ class ViscoAcousticWave2D(_ViscoAcousticWave):
             name=name,
             op_name=op_name,
         )
+
+    @staticmethod
+    def _crop_model(m: NDArray, nbl: int) -> NDArray:
+        """Remove absorbing boundaries from model"""
+        return m[nbl:-nbl, nbl:-nbl]
 
 
 class ViscoAcousticWave3D(_ViscoAcousticWave):
@@ -2178,7 +2183,7 @@ class ViscoAcousticWave3D(_ViscoAcousticWave):
         op_name: str = "fwd",
     ) -> None:
 
-        if len(shape) < 3:
+        if len(shape) != 3:
             raise Exception(
                 "Attempting to create a 2D operator with a 3D intended class!"
             )
@@ -2209,3 +2214,8 @@ class ViscoAcousticWave3D(_ViscoAcousticWave):
             name=name,
             op_name=op_name,
         )
+
+    @staticmethod
+    def _crop_model(m: NDArray, nbl: int) -> NDArray:
+        """Remove absorbing boundaries from model"""
+        return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
