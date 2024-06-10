@@ -16,6 +16,8 @@ from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
 
+from copy import deepcopy
+
 devito_message = deps.devito_import("the twoway module")
 
 if devito_message is None:
@@ -1349,7 +1351,7 @@ class ElasticWave2D(LinearOperator):
 
         for isrc in range(nsrc):
             d = self._fwd_oneshot(isrc, v)
-            dtot.append(d)
+            dtot.append(deepcopy(d))
 
         # Adjust dimensions
         rec_data = list(zip(*dtot))
@@ -1835,7 +1837,7 @@ class ElasticWave3D(LinearOperator):
 
         for isrc in range(nsrc):
             d = self._fwd_oneshot(isrc, v)
-            dtot.append(d)
+            dtot.append(deepcopy(d))
 
         # Adjust dimensions
         rec_data = list(zip(*dtot))
