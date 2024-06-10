@@ -1148,12 +1148,13 @@ class ElasticWave2D(LinearOperator):
         name: str = "A",
         par: str = "lam-mu",
         op_name: str = "fwd",
+        dt: int = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
 
         # create model
-        self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl)
+        self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl, dt=dt)
         self._create_geometry(src_x, src_z, rec_x, rec_z, t0, tn, src_type, f0=f0)
         self.checkpointing = checkpointing
         self.par = par
@@ -1186,6 +1187,7 @@ class ElasticWave2D(LinearOperator):
         rho: NDArray,
         space_order: int = 6,
         nbl: int = 20,
+        dt: int = None,
     ) -> None:
         """Create model
 
@@ -1217,6 +1219,7 @@ class ElasticWave2D(LinearOperator):
             spacing=spacing,
             nbl=nbl,
             bcs="damp",
+            dt=dt,
         )
 
     def _create_geometry(
