@@ -1019,6 +1019,15 @@ class ElasticWave2D(LinearOperator):
         rec_vz = self.geometry.rec.copy()
         rec_vz.data[:] = dobs[2].T[:]
 
+        if "rec_p" in self.karguments:
+            # If it exists in the karguments, I update the rec_p data field in the karguments.
+            self.karguments["rec_p"].data[:] = dobs[0].T[:]
+        else:
+            # If it does not exist in karguments, I copy the structure of rec, assign the data, and add it to the karguments
+            rec_p = self.geometry.rec.copy()
+            rec_p.data[:] = dobs[2].T[:]
+            self.karguments["rec_p"] = rec_p
+
         solver = IsoElasticWaveSolver(
             self.model, geometry, space_order=self.space_order
         )
