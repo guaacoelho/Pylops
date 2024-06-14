@@ -1150,7 +1150,7 @@ class ElasticWave2D(LinearOperator):
 
     def add_args(self, **kwargs):
         # TODO: decide if this values will be manteined at the object or it will be resete after matvec's execution.
-        self.karguments = kwargs
+        self.karguments = deepcopy(kwargs)
 
     def __mul__(self, x: Union[float, LinearOperator]) -> LinearOperator:
         # data must be a np.array
