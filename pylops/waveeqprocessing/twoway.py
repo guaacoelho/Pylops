@@ -1534,6 +1534,9 @@ class ElasticWave2D(LinearOperator):
         return super().dot(x)
 
     def forward(self, x: NDArray, **kwargs):
+        if not isinstance(x, np.ndarray):
+            x = np.array(x)
+
         # save current op_name to get back to it after the forward modelling
         save_op_name = self.op_name
 
