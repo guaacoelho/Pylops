@@ -789,7 +789,7 @@ class ElasticWave2D(LinearOperator):
         n_grad_out = 3
         super().__init__(
             dtype=np.dtype(dtype),
-            dims=(n_grad_out, vp.shape[0], vp.shape[1]),
+            dims=(n_grad_out, self.model.vp.shape[0], self.model.vp.shape[1]),
             dimsd=(num_outs, len(src_x), len(rec_x), self.geometry.nt),
             explicit=False,
             name=name,
@@ -946,7 +946,7 @@ class ElasticWave2D(LinearOperator):
 
         # Assignment of values to physical parameters functions based on the values in 'v'
         for function, value in zip(functions, v):
-            initialize_function(function, value, self.model.padsizes)
+            initialize_function(function, value, 0)
 
         # Update 'karguments' to contain the values of the parameters defined in 'args'
         self.karguments.update(dict(zip(args, functions)))
@@ -1061,7 +1061,7 @@ class ElasticWave2D(LinearOperator):
         """
         nsrc = self.geometry.src_positions.shape[0]
 
-        shape = self.model.shape
+        shape = self.model.grid.shape
         mtot = np.zeros((3, shape[0], shape[1]), dtype=np.float32)
 
         for isrc in range(nsrc):
@@ -1072,7 +1072,7 @@ class ElasticWave2D(LinearOperator):
 
             # post-process data
             for ii, g in enumerate(grads):
-                mtot[ii] += self._crop_model(g.data, self.model.nbl)
+                mtot[ii] += g.data
         return mtot
 
     def _register_multiplications(self, op_name: str) -> None:
