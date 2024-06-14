@@ -10,6 +10,7 @@ __all__ = [
 from typing import Tuple, Union
 
 import numpy as np
+from copy import deepcopy
 
 from pylops import LinearOperator
 from pylops.utils import deps
@@ -975,7 +976,7 @@ class ElasticWave2D(LinearOperator):
 
         for isrc in range(nsrc):
             d = self._fwd_oneshot(isrc, v)
-            dtot.append(d)
+            dtot.append(deepcopy(d))
 
         # Adjust dimensions
         rec_data = list(zip(*dtot))
@@ -1471,7 +1472,7 @@ class ElasticWave3D(LinearOperator):
 
         for isrc in range(nsrc):
             d = self._fwd_oneshot(isrc, v)
-            dtot.append(d)
+            dtot.append(deepcopy(d))
 
         # Adjust dimensions
         rec_data = list(zip(*dtot))
