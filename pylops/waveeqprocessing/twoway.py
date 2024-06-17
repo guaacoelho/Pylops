@@ -835,8 +835,8 @@ class ElasticWave2D(LinearOperator):
         self.space_order = space_order
         self.model = ISOSeismicModel(
             space_order=space_order,
-            vp=vp * 1e-3,
-            vs=vs * 1e-3,
+            vp=vp / 1000,
+            vs=vs / 1000,
             rho=rho,
             origin=origin,
             shape=shape,
