@@ -900,13 +900,13 @@ class ElasticWave2D(LinearOperator):
             f0=None if f0 is None else f0 * 1e-3,
         )
 
-    def _fwd_oneshot(self, isrc: int, v: NDArray) -> NDArray:
+    def _fwd_oneshot(self, solver, v: NDArray) -> NDArray:
         """Forward modelling for one shot
 
         Parameters
         ----------
-        isrc : :obj:`int`
-            Index of source to model
+        solver : :obj:`IsoElasticWaveSolver`
+            Devito's solver object.
         v : :obj:`np.ndarray`
             Velocity Model
 
@@ -916,17 +916,6 @@ class ElasticWave2D(LinearOperator):
             Data
 
         """
-        # create geometry for single source
-        geometry = AcquisitionGeometry(
-            self.model,
-            self.geometry.rec_positions,
-            self.geometry.src_positions[isrc, :],
-            self.geometry.t0,
-            self.geometry.tn,
-            f0=self.geometry.f0,
-            src_type=self.geometry.src_type,
-        )
-
         # If "par" was not provided as a parameter to forward execution, use the operator's default value
         self.karguments["par"] = self.karguments.get("par", self.par)
 
@@ -951,13 +940,10 @@ class ElasticWave2D(LinearOperator):
         # Update 'karguments' to contain the values of the parameters defined in 'args'
         self.karguments.update(dict(zip(args, functions)))
 
-        solver = IsoElasticWaveSolver(
-            self.model, geometry, space_order=self.space_order
-        )
         rec_data = list(solver.forward(**self.karguments)[0:3])
 
         for ii, d in enumerate(rec_data):
-            rec_data[ii] = d.resample(geometry.dt).data[:][: geometry.nt].T
+            rec_data[ii] = d.resample(solver.geometry.dt).data[:][: solver.geometry.nt].T
         return rec_data
 
     def _fwd_allshots(self, v: NDArray) -> NDArray:
@@ -974,11 +960,28 @@ class ElasticWave2D(LinearOperator):
             Data for all shots
 
         """
+        # create geometry for single source
+        geometry = AcquisitionGeometry(
+            self.model,
+            self.geometry.rec_positions,
+            self.geometry.src_positions[0, :],
+            self.geometry.t0,
+            self.geometry.tn,
+            f0=self.geometry.f0,
+            src_type=self.geometry.src_type,
+        )
+
         nsrc = self.geometry.src_positions.shape[0]
         dtot = []
 
+        # create solver
+        solver = IsoElasticWaveSolver(
+            self.model, geometry, space_order=self.space_order
+        )
+
         for isrc in range(nsrc):
-            d = self._fwd_oneshot(isrc, v)
+            solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
+            d = self._fwd_oneshot(solver, v)
             dtot.append(deepcopy(d))
 
         # Adjust dimensions
@@ -986,7 +989,7 @@ class ElasticWave2D(LinearOperator):
 
         return np.array(rec_data)
 
-    def _grad_oneshot(self, isrc, dobs):
+    def _grad_oneshot(self, isrc, dobs, solver):
         """Adjoint gradient modelling for one shot
 
         Parameters
@@ -995,6 +998,8 @@ class ElasticWave2D(LinearOperator):
             Index of source to model
         dobs : :obj:`np.ndarray`
             Observed data to inject
+        solver : :obj:`IsoElasticWaveSolver`
+            Devito's solver object
 
         Returns
         -------
@@ -1002,16 +1007,6 @@ class ElasticWave2D(LinearOperator):
             Model
 
         """
-        # create geometry for single source
-        geometry = AcquisitionGeometry(
-            self.model,
-            self.geometry.rec_positions,
-            self.geometry.src_positions[isrc, :],
-            self.geometry.t0,
-            self.geometry.tn,
-            f0=self.geometry.f0,
-            src_type=self.geometry.src_type,
-        )
         # create boundary data
         rec_vx = self.geometry.rec.copy()
         rec_vx.data[:] = dobs[1].T[:]
@@ -1027,10 +1022,6 @@ class ElasticWave2D(LinearOperator):
             rec_p = self.geometry.rec.copy()
             rec_p.data[:] = dobs[2].T[:]
             self.karguments["rec_p"] = rec_p
-
-        solver = IsoElasticWaveSolver(
-            self.model, geometry, space_order=self.space_order
-        )
 
         # If "par" was not passed as a parameter to forward execution, use the operator's default value
         self.karguments["par"] = self.karguments.get("par", self.par)
@@ -1068,16 +1059,32 @@ class ElasticWave2D(LinearOperator):
             Model
 
         """
+        # create geometry for single source
+        geometry = AcquisitionGeometry(
+            self.model,
+            self.geometry.rec_positions,
+            self.geometry.src_positions[0, :],
+            self.geometry.t0,
+            self.geometry.tn,
+            f0=self.geometry.f0,
+            src_type=self.geometry.src_type,
+        )
+
         nsrc = self.geometry.src_positions.shape[0]
 
         shape = self.model.grid.shape
         mtot = np.zeros((3, shape[0], shape[1]), dtype=np.float32)
 
+        solver = IsoElasticWaveSolver(
+            self.model, geometry, space_order=self.space_order
+        )
+
         for isrc in range(nsrc):
             # For each dobs get data equivalent to isrc shot
             isrc_rec = [rec[isrc] for rec in dobs]
 
-            grads = self._grad_oneshot(isrc, isrc_rec)
+            solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
+            grads = self._grad_oneshot(isrc, isrc_rec, solver)
 
             # post-process data
             for ii, g in enumerate(grads):
