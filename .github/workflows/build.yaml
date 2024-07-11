@@ -12,6 +12,8 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
     - uses: actions/checkout@v3
+    - name: Show origin
+      run: git remote -v
     - name: Get history and tags for SCM versioning to work
       run: |
         git fetch --prune --unshallow
