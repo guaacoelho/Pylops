@@ -707,10 +707,14 @@ class _ElasticWave(LinearOperator):
         Velocity model in m/s
     src_x : :obj:`numpy.ndarray`
         Source x-coordinates in m
+    src_y : :obj:`numpy.ndarray`
+        Source y-coordinates in m
     src_z : :obj:`numpy.ndarray` or :obj:`float`
         Source z-coordinates in m
     rec_x : :obj:`numpy.ndarray`
         Receiver x-coordinates in m
+    rec_y : :obj:`numpy.ndarray`
+        Receiver y-coordinates in m
     rec_z : :obj:`numpy.ndarray` or :obj:`float`
         Receiver z-coordinates in m
     t0 : :obj:`float`
@@ -790,19 +794,12 @@ class _ElasticWave(LinearOperator):
         self.karguments = {}
         dim = self.model.dim
 
-        if dim == 2:
-            num_outs = 3
-            n_input = 3
-            dims = (n_input, self.model.vp.shape[0], self.model.vp.shape[1])
-        elif dim == 3:
-            num_outs = 4
-            n_input = 3
-            dims = (
-                n_input,
-                self.model.vp.shape[0],
-                self.model.vp.shape[1],
-                self.model.vp.shape[2],
-            )
+        n_input = 3
+        num_outs = dim + 1
+        dims = (n_input, self.model.vp.shape[0], self.model.vp.shape[1])
+        # If dim is 3, add the last dimension
+        if dim == 3:
+            dims = (*dims, self.model.vp.shape[2])
 
         super().__init__(
             dtype=np.dtype(dtype),
@@ -962,10 +959,8 @@ class _ElasticWave(LinearOperator):
         # Update 'karguments' to contain the values of the parameters defined in 'args'
         self.karguments.update(dict(zip(args, functions)))
 
-        if self.model.dim == 2:
-            rec_data = list(solver.forward(**self.karguments)[0:3])
-        elif self.model.dim == 3:
-            rec_data = list(solver.forward(**self.karguments)[0:4])
+        dim = self.model.dim
+        rec_data = list(solver.forward(**self.karguments)[0 : dim + 1])
 
         for ii, d in enumerate(rec_data):
             rec_data[ii] = (
@@ -1038,16 +1033,11 @@ class _ElasticWave(LinearOperator):
         # create boundary data
         rec_vx = self.geometry.rec.copy()
         rec_vx.data[:] = dobs[1].T[:]
-
-        if dim == 2:
-            # rec_vy = None
-            rec_vz = self.geometry.rec.copy()
-            rec_vz.data[:] = dobs[2].T[:]
-        elif dim == 3:
+        rec_vz = self.geometry.rec.copy()
+        rec_vz.data[:] = dobs[-1].T[:]
+        if dim == 3:
             rec_vy = self.geometry.rec.copy()
             rec_vy.data[:] = dobs[2].T[:]
-            rec_vz = self.geometry.rec.copy()
-            rec_vz.data[:] = dobs[3].T[:]
 
         if "rec_p" in self.karguments:
             # If it exists in the karguments, I update the rec_p data field in the karguments.
@@ -1066,10 +1056,8 @@ class _ElasticWave(LinearOperator):
             u0 = self.src_wavefield[isrc]
         else:
             par = self.karguments.get("par")
-            if dim == 2:
-                u0 = solver.forward(save=True, par=par)[3]
-            elif dim == 3:
-                u0 = solver.forward(save=True, par=par)[4]
+            u0 = solver.forward(save=True, par=par)[dim + 1]
+
         # adjoint modelling (reverse wavefield plus imaging condition)
         grad1, grad2, grad3 = solver.jacobian_adjoint(
             rec_vx,
@@ -1090,11 +1078,18 @@ class _ElasticWave(LinearOperator):
         dobs : :obj:`np.ndarray`
             Observed data to inject.
 
-            The shape of dobs is (3, nsrc, nrecs. nt):
+            The shape of dobs is (n_input, nsrc, nrecs. nt):
+            If it is 2-dimensional, the positions are as follows:
+                dobs[0] = rec_tau
+                dobs[1] = rec_vx
+                dobs[2] = rec_vz
 
+            And if 3-dimensional:
                 dobs[0] = rec_tau
                 dobs[1] = rec_vx
                 dobs[2] = rec_vy
+                dobs[3] = rec_vz
+
         Returns
         -------
         model : :obj:`np.ndarray`
@@ -1311,12 +1306,6 @@ class ElasticWave2D(_ElasticWave):
 
     """
 
-    _list_par = {
-        "lam-mu": ["lam", "mu", "rho"],
-        "vp-vs-rho": ["vp", "vs", "rho"],
-        "Ip-Is-rho": ["Ip", "Is", "rho"],
-    }
-
     def __init__(
         self,
         shape: InputDimsLike,
@@ -1396,10 +1385,14 @@ class ElasticWave3D(_ElasticWave):
         Velocity model in m/s
     src_x : :obj:`numpy.ndarray`
         Source x-coordinates in m
+    src_y : :obj:`numpy.ndarray`
+        Source y-coordinates in m
     src_z : :obj:`numpy.ndarray` or :obj:`float`
         Source z-coordinates in m
     rec_x : :obj:`numpy.ndarray`
         Receiver x-coordinates in m
+    rec_y : :obj:`numpy.ndarray`
+        Receiver y-coordinates in m
     rec_z : :obj:`numpy.ndarray` or :obj:`float`
         Receiver z-coordinates in m
     t0 : :obj:`float`
@@ -1433,12 +1426,6 @@ class ElasticWave3D(_ElasticWave):
 
     """
 
-    _list_par = {
-        "lam-mu": ["lam", "mu", "rho"],
-        "vp-vs-rho": ["vp", "vs", "rho"],
-        "Ip-Is-rho": ["Ip", "Is", "rho"],
-    }
-
     def __init__(
         self,
         shape: InputDimsLike,
@@ -1471,7 +1458,7 @@ class ElasticWave3D(_ElasticWave):
 
         if len(shape) != 3:
             raise Exception(
-                "Attempting to create a 3D operator with a 2D intended class!"
+                "Attempting to create a 2D operator with a 3D intended class!"
             )
 
         super().__init__(
