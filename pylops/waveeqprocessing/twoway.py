@@ -7,10 +7,10 @@ __all__ = [
     "ViscoAcousticWave3D",
 ]
 
+from copy import deepcopy
 from typing import Tuple, Union
 
 import numpy as np
-from copy import deepcopy
 
 from pylops import LinearOperator
 from pylops.utils import deps
@@ -692,7 +692,7 @@ class AcousticWave3D(_AcousticWave):
         return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
 
 
-class ElasticWave2D(LinearOperator):
+class _ElasticWave(LinearOperator):
     """Devito Elastic propagator.
 
     Parameters
@@ -707,10 +707,14 @@ class ElasticWave2D(LinearOperator):
         Velocity model in m/s
     src_x : :obj:`numpy.ndarray`
         Source x-coordinates in m
+    src_y : :obj:`numpy.ndarray`
+        Source y-coordinates in m
     src_z : :obj:`numpy.ndarray` or :obj:`float`
         Source z-coordinates in m
     rec_x : :obj:`numpy.ndarray`
         Receiver x-coordinates in m
+    rec_y : :obj:`numpy.ndarray`
+        Receiver y-coordinates in m
     rec_z : :obj:`numpy.ndarray` or :obj:`float`
         Receiver z-coordinates in m
     t0 : :obj:`float`
@@ -774,33 +778,38 @@ class ElasticWave2D(LinearOperator):
         par: str = "lam-mu",
         op_name: str = "fwd",
         dt: int = None,
+        src_y: NDArray = None,
+        rec_y: NDArray = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
 
         # create model
-        self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl, dt=dt)
-        self._create_geometry(src_x, src_z, rec_x, rec_z, t0, tn, src_type, f0=f0)
+        self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl, dt)
+        self._create_geometry(
+            src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0
+        )
         self.checkpointing = checkpointing
         self.par = par
         self.karguments = {}
+        dim = self.model.dim
 
-        num_outs = 3
-        n_grad_out = 3
+        n_input = 3
+        num_outs = dim + 1
+        dims = (n_input, self.model.vp.shape[0], self.model.vp.shape[1])
+        # If dim is 3, add the last dimension
+        if dim == 3:
+            dims = (*dims, self.model.vp.shape[2])
+
         super().__init__(
             dtype=np.dtype(dtype),
-            dims=(n_grad_out, self.model.vp.shape[0], self.model.vp.shape[1]),
+            dims=dims,
             dimsd=(num_outs, len(src_x), len(rec_x), self.geometry.nt),
             explicit=False,
             name=name,
         )
 
         self._register_multiplications(op_name)
-
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        return m[nbl:-nbl, nbl:-nbl]
 
     def _create_model(
         self,
@@ -850,8 +859,10 @@ class ElasticWave2D(LinearOperator):
     def _create_geometry(
         self,
         src_x: NDArray,
+        src_y: NDArray,
         src_z: NDArray,
         rec_x: NDArray,
+        rec_y: NDArray,
         rec_z: NDArray,
         t0: float,
         tn: int,
@@ -864,10 +875,14 @@ class ElasticWave2D(LinearOperator):
         ----------
         src_x : :obj:`numpy.ndarray`
             Source x-coordinates in m
+        src_y : :obj:`numpy.ndarray`
+            Source y-coordinates in m
         src_z : :obj:`numpy.ndarray` or :obj:`float`
             Source z-coordinates in m
         rec_x : :obj:`numpy.ndarray`
             Receiver x-coordinates in m
+        rec_y : :obj:`numpy.ndarray`
+            Receiver y-coordinates in m
         rec_z : :obj:`numpy.ndarray` or :obj:`float`
             Receiver z-coordinates in m
         t0 : :obj:`float`
@@ -882,13 +897,17 @@ class ElasticWave2D(LinearOperator):
         """
 
         nsrc, nrec = len(src_x), len(rec_x)
-        src_coordinates = np.empty((nsrc, 2))
+        src_coordinates = np.empty((nsrc, self.model.dim))
         src_coordinates[:, 0] = src_x
-        src_coordinates[:, 1] = src_z
+        src_coordinates[:, -1] = src_z
+        if self.model.dim == 3:
+            src_coordinates[:, 1] = src_y
 
-        rec_coordinates = np.empty((nrec, 2))
+        rec_coordinates = np.empty((nrec, self.model.dim))
         rec_coordinates[:, 0] = rec_x
-        rec_coordinates[:, 1] = rec_z
+        rec_coordinates[:, -1] = rec_z
+        if self.model.dim == 3:
+            rec_coordinates[:, 1] = rec_y
 
         self.geometry = AcquisitionGeometry(
             self.model,
@@ -897,7 +916,7 @@ class ElasticWave2D(LinearOperator):
             t0,
             tn,
             src_type=src_type,
-            f0=None if f0 is None else f0 * 1e-3,
+            f0=None if f0 is None else f0 / 1000,
         )
 
     def _fwd_oneshot(self, solver, v: NDArray) -> NDArray:
@@ -940,10 +959,13 @@ class ElasticWave2D(LinearOperator):
         # Update 'karguments' to contain the values of the parameters defined in 'args'
         self.karguments.update(dict(zip(args, functions)))
 
-        rec_data = list(solver.forward(**self.karguments)[0:3])
+        dim = self.model.dim
+        rec_data = list(solver.forward(**self.karguments)[0 : dim + 1])
 
         for ii, d in enumerate(rec_data):
-            rec_data[ii] = d.resample(solver.geometry.dt).data[:][: solver.geometry.nt].T
+            rec_data[ii] = (
+                d.resample(solver.geometry.dt).data[:][: solver.geometry.nt].T
+            )
         return rec_data
 
     def _fwd_allshots(self, v: NDArray) -> NDArray:
@@ -1007,12 +1029,15 @@ class ElasticWave2D(LinearOperator):
             Model
 
         """
+        dim = self.model.dim
         # create boundary data
         rec_vx = self.geometry.rec.copy()
         rec_vx.data[:] = dobs[1].T[:]
-
         rec_vz = self.geometry.rec.copy()
-        rec_vz.data[:] = dobs[2].T[:]
+        rec_vz.data[:] = dobs[-1].T[:]
+        if dim == 3:
+            rec_vy = self.geometry.rec.copy()
+            rec_vy.data[:] = dobs[2].T[:]
 
         if "rec_p" in self.karguments:
             # If it exists in the karguments, I update the rec_p data field in the karguments.
@@ -1020,7 +1045,7 @@ class ElasticWave2D(LinearOperator):
         else:
             # If it does not exist in karguments, I copy the structure of rec, assign the data, and add it to the karguments
             rec_p = self.geometry.rec.copy()
-            rec_p.data[:] = dobs[2].T[:]
+            rec_p.data[:] = dobs[0].T[:]
             self.karguments["rec_p"] = rec_p
 
         # If "par" was not passed as a parameter to forward execution, use the operator's default value
@@ -1031,11 +1056,16 @@ class ElasticWave2D(LinearOperator):
             u0 = self.src_wavefield[isrc]
         else:
             par = self.karguments.get("par")
-            u0 = solver.forward(save=True, par=par)[3]
+            u0 = solver.forward(save=True, par=par)[dim + 1]
 
         # adjoint modelling (reverse wavefield plus imaging condition)
         grad1, grad2, grad3 = solver.jacobian_adjoint(
-            rec_vx, rec_vz, u0, checkpointing=self.checkpointing, **self.karguments
+            rec_vx,
+            rec_vz,
+            u0,
+            rec_vy=None if dim == 2 else rec_vy,
+            checkpointing=self.checkpointing,
+            **self.karguments
         )[0:3]
 
         return grad1, grad2, grad3
@@ -1048,11 +1078,18 @@ class ElasticWave2D(LinearOperator):
         dobs : :obj:`np.ndarray`
             Observed data to inject.
 
-            The shape of dobs is (3, nsrc, nrecs. nt):
+            The shape of dobs is (n_input, nsrc, nrecs. nt):
+            If it is 2-dimensional, the positions are as follows:
+                dobs[0] = rec_tau
+                dobs[1] = rec_vx
+                dobs[2] = rec_vz
 
+            And if 3-dimensional:
                 dobs[0] = rec_tau
                 dobs[1] = rec_vx
                 dobs[2] = rec_vy
+                dobs[3] = rec_vz
+
         Returns
         -------
         model : :obj:`np.ndarray`
@@ -1073,7 +1110,10 @@ class ElasticWave2D(LinearOperator):
         nsrc = self.geometry.src_positions.shape[0]
 
         shape = self.model.grid.shape
-        mtot = np.zeros((3, shape[0], shape[1]), dtype=np.float32)
+        if self.model.dim == 2:
+            mtot = np.zeros((3, shape[0], shape[1]), dtype=np.float32)
+        elif self.model.dim == 3:
+            mtot = np.zeros((3, shape[0], shape[1], shape[2]), dtype=np.float32)
 
         solver = IsoElasticWaveSolver(
             self.model, geometry, space_order=self.space_order
@@ -1099,20 +1139,27 @@ class ElasticWave2D(LinearOperator):
         else:
             raise Exception("The operator's name '%s' is not valid." % op_name)
 
-    def create_receiver(self, name, rx=None, rz=None, t0=None, tn=None, dt=None):
+    def create_receiver(
+        self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
+    ):
 
         tn = tn or self.geometry.tn
         t0 = t0 or self.geometry.t0
         dt = dt or self.model.critical_dt
 
         rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
-        rz = rz if rz is not None else self.geometry.rec_positions[:, 1]
+        rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
+
+        if self.model.dim == 3:
+            ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
 
         nrec = len(rx)
 
-        rec_coordinates = np.empty((nrec, 2))
+        rec_coordinates = np.empty((nrec, self.model.dim))
         rec_coordinates[:, 0] = rx
-        rec_coordinates[:, 1] = rz
+        rec_coordinates[:, -1] = rz
+        if self.model.dim == 3:
+            rec_coordinates[:, 1] = ry
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
         return Receiver(
@@ -1124,7 +1171,16 @@ class ElasticWave2D(LinearOperator):
         )
 
     def create_source(
-        self, name, sx=None, sz=None, t0=None, tn=None, dt=None, f0=None, src_type=None
+        self,
+        name,
+        sx=None,
+        sy=None,
+        sz=None,
+        t0=None,
+        tn=None,
+        dt=None,
+        f0=None,
+        src_type=None,
     ):
 
         tn = tn or self.geometry.tn
@@ -1135,13 +1191,17 @@ class ElasticWave2D(LinearOperator):
         src_type = src_type or self.geometry.src_type
 
         sx = sx or self.geometry.src_positions[:, 0]
-        sz = sz or self.geometry.src_positions[:, 1]
+        sz = sz or self.geometry.src_positions[:, -1]
+        if self.model.dim == 3:
+            sy = sy or self.geometry.src_positions[:, 1]
 
         nsrc = len(sx)
 
-        src_coordinates = np.empty((nsrc, 2))
+        src_coordinates = np.empty((nsrc, self.model.dim))
         src_coordinates[:, 0] = sx
-        src_coordinates[:, 1] = sz
+        src_coordinates[:, -1] = sz
+        if self.model.dim == 2:
+            src_coordinates[:, 1] = sy
 
         time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
 
@@ -1194,7 +1254,7 @@ class ElasticWave2D(LinearOperator):
         return y
 
 
-class ElasticWave3D(LinearOperator):
+class ElasticWave2D(_ElasticWave):
     """Devito Elastic propagator.
 
     Parameters
@@ -1246,11 +1306,125 @@ class ElasticWave3D(LinearOperator):
 
     """
 
-    _list_par = {
-        "lam-mu": ["lam", "mu", "rho"],
-        "vp-vs-rho": ["vp", "vs", "rho"],
-        "Ip-Is-rho": ["Ip", "Is", "rho"],
-    }
+    def __init__(
+        self,
+        shape: InputDimsLike,
+        origin: SamplingLike,
+        spacing: SamplingLike,
+        vp: NDArray,
+        vs: NDArray,
+        rho: NDArray,
+        src_x: NDArray,
+        src_z: NDArray,
+        rec_x: NDArray,
+        rec_z: NDArray,
+        t0: float,
+        tn: int,
+        src_type: str = "Ricker",
+        space_order: int = 6,
+        nbl: int = 20,
+        f0: float = 20.0,
+        checkpointing: bool = False,
+        dtype: DTypeLike = "float32",
+        name: str = "A",
+        par: str = "lam-mu",
+        op_name: str = "fwd",
+        dt: int = None,
+    ) -> None:
+        if devito_message is not None:
+            raise NotImplementedError(devito_message)
+
+        if len(shape) != 2:
+            raise Exception(
+                "Attempting to create a 3D operator using a 2D intended class!"
+            )
+
+        super().__init__(
+            shape=shape,
+            origin=origin,
+            spacing=spacing,
+            vp=vp,
+            vs=vs,
+            rho=rho,
+            src_x=src_x,
+            src_z=src_z,
+            rec_x=rec_x,
+            rec_z=rec_z,
+            t0=t0,
+            tn=tn,
+            src_type=src_type,
+            space_order=space_order,
+            nbl=nbl,
+            f0=f0,
+            checkpointing=checkpointing,
+            dtype=dtype,
+            name=name,
+            par=par,
+            op_name=op_name,
+            dt=dt,
+        )
+
+    @staticmethod
+    def _crop_model(m: NDArray, nbl: int) -> NDArray:
+        """Remove absorbing boundaries from model"""
+        return m[nbl:-nbl, nbl:-nbl]
+
+
+class ElasticWave3D(_ElasticWave):
+    """Devito Elastic propagator.
+
+    Parameters
+    ----------
+    shape : :obj:`tuple` or :obj:`numpy.ndarray`
+        Model shape ``(nx, nz)``
+    origin : :obj:`tuple` or :obj:`numpy.ndarray`
+        Model origin ``(ox, oz)``
+    spacing : :obj:`tuple` or  :obj:`numpy.ndarray`
+        Model spacing ``(dx, dz)``
+    vp : :obj:`numpy.ndarray`
+        Velocity model in m/s
+    src_x : :obj:`numpy.ndarray`
+        Source x-coordinates in m
+    src_y : :obj:`numpy.ndarray`
+        Source y-coordinates in m
+    src_z : :obj:`numpy.ndarray` or :obj:`float`
+        Source z-coordinates in m
+    rec_x : :obj:`numpy.ndarray`
+        Receiver x-coordinates in m
+    rec_y : :obj:`numpy.ndarray`
+        Receiver y-coordinates in m
+    rec_z : :obj:`numpy.ndarray` or :obj:`float`
+        Receiver z-coordinates in m
+    t0 : :obj:`float`
+        Initial time
+    tn : :obj:`int`
+        Number of time samples
+    src_type : :obj:`str`
+        Source type
+    space_order : :obj:`int`, optional
+        Spatial ordering of FD stencil
+    nbl : :obj:`int`, optional
+        Number ordering of samples in absorbing boundaries
+    f0 : :obj:`float`, optional
+        Source peak frequency (Hz)
+    checkpointing : :obj:`bool`, optional
+        Use checkpointing (``True``) or not (``False``). Note that
+        using checkpointing is needed when dealing with large models
+        but it will slow down computations
+    dtype : :obj:`str`, optional
+        Type of elements in input array.
+    name : :obj:`str`, optional
+        Name of operator (to be used by :func:`pylops.utils.describe.describe`)
+
+    Attributes
+    ----------
+    shape : :obj:`tuple`
+        Operator shape
+    explicit : :obj:`bool`
+        Operator contains a matrix that can be solved explicitly (``True``) or
+        not (``False``)
+
+    """
 
     def __init__(
         self,
@@ -1277,438 +1451,47 @@ class ElasticWave3D(LinearOperator):
         name: str = "A",
         par: str = "lam-mu",
         op_name: str = "fwd",
+        dt: int = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
 
-        # create model
-        self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl)
-        self._create_geometry(
-            src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0
-        )
-        self.checkpointing = checkpointing
-        self.par = par
-        self.karguments = {}
+        if len(shape) != 3:
+            raise Exception(
+                "Attempting to create a 2D operator with a 3D intended class!"
+            )
 
-        num_outs = 4
-        n_input = 3
         super().__init__(
-            dtype=np.dtype(dtype),
-            dims=(n_input, vp.shape[0], vp.shape[1], vp.shape[2]),
-            dimsd=(num_outs, len(src_x), len(rec_x), self.geometry.nt),
-            explicit=False,
+            shape=shape,
+            origin=origin,
+            spacing=spacing,
+            vp=vp,
+            vs=vs,
+            rho=rho,
+            src_x=src_x,
+            src_y=src_y,
+            src_z=src_z,
+            rec_x=rec_x,
+            rec_y=rec_y,
+            rec_z=rec_z,
+            t0=t0,
+            tn=tn,
+            src_type=src_type,
+            space_order=space_order,
+            nbl=nbl,
+            f0=f0,
+            checkpointing=checkpointing,
+            dtype=dtype,
             name=name,
+            par=par,
+            op_name=op_name,
+            dt=dt,
         )
-
-        self._register_multiplications(op_name)
 
     @staticmethod
     def _crop_model(m: NDArray, nbl: int) -> NDArray:
         """Remove absorbing boundaries from model"""
         return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
-
-    def _create_model(
-        self,
-        shape: InputDimsLike,
-        origin: SamplingLike,
-        spacing: SamplingLike,
-        vp: NDArray,
-        vs: NDArray,
-        rho: NDArray,
-        space_order: int = 6,
-        nbl: int = 20,
-    ) -> None:
-        """Create model
-
-        Parameters
-        ----------
-        shape : :obj:`numpy.ndarray`
-            Model shape ``(nx, nz)``
-        origin : :obj:`numpy.ndarray`
-            Model origin ``(ox, oz)``
-        spacing : :obj:`numpy.ndarray`
-            Model spacing ``(dx, dz)``
-        vp : :obj:`numpy.ndarray`
-            Velocity model in m/s
-        space_order : :obj:`int`, optional
-            Spatial ordering of FD stencil
-        nbl : :obj:`int`, optional
-            Number ordering of samples in absorbing boundaries
-
-        """
-        self.space_order = space_order
-        self.model = ISOSeismicModel(
-            space_order=space_order,
-            vp=vp * 1e-3,
-            vs=vs * 1e-3,
-            rho=rho,
-            origin=origin,
-            shape=shape,
-            dtype=np.float32,
-            spacing=spacing,
-            nbl=nbl,
-            bcs="damp",
-        )
-
-    def _create_geometry(
-        self,
-        src_x: NDArray,
-        src_y: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_y: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str,
-        f0: float = 20.0,
-    ) -> None:
-        """Create geometry and time axis
-
-        Parameters
-        ----------
-        src_x : :obj:`numpy.ndarray`
-            Source x-coordinates in m
-        src_y : :obj:`numpy.ndarray`
-            Source y-coordinates in m
-        src_z : :obj:`numpy.ndarray` or :obj:`float`
-            Source z-coordinates in m
-        rec_x : :obj:`numpy.ndarray`
-            Receiver x-coordinates in m
-        rec_y : :obj:`numpy.ndarray`
-            Receiver y-coordinates in m
-        rec_z : :obj:`numpy.ndarray` or :obj:`float`
-            Receiver z-coordinates in m
-        t0 : :obj:`float`
-            Initial time
-        tn : :obj:`int`
-            Number of time samples
-        src_type : :obj:`str`
-            Source type
-        f0 : :obj:`float`, optional
-            Source peak frequency (Hz)
-
-        """
-
-        nsrc, nrec = len(src_x), len(rec_x)
-        src_coordinates = np.empty((nsrc, 3))
-        src_coordinates[:, 0] = src_x
-        src_coordinates[:, 1] = src_y
-        src_coordinates[:, -1] = src_z
-
-        rec_coordinates = np.empty((nrec, 3))
-        rec_coordinates[:, 0] = rec_x
-        rec_coordinates[:, 1] = rec_y
-        rec_coordinates[:, -1] = rec_z
-
-        self.geometry = AcquisitionGeometry(
-            self.model,
-            rec_coordinates,
-            src_coordinates,
-            t0,
-            tn,
-            src_type=src_type,
-            f0=None if f0 is None else f0 * 1e-3,
-        )
-
-    def _fwd_oneshot(self, isrc: int, v: NDArray) -> NDArray:
-        """Forward modelling for one shot
-
-        Parameters
-        ----------
-        isrc : :obj:`int`
-            Index of source to model
-        v : :obj:`np.ndarray`
-            Velocity Model
-
-        Returns
-        -------
-        d : :obj:`np.ndarray`
-            Data
-
-        """
-        # create geometry for single source
-        geometry = AcquisitionGeometry(
-            self.model,
-            self.geometry.rec_positions,
-            self.geometry.src_positions[isrc, :],
-            self.geometry.t0,
-            self.geometry.tn,
-            f0=self.geometry.f0,
-            src_type=self.geometry.src_type,
-        )
-
-        # If "par" was not provided as a parameter to forward execution, use the operator's default value
-        self.karguments["par"] = self.karguments.get("par", self.par)
-
-        # get arguments that will be used for this elastic forward execution
-        args = self._list_par[self.karguments["par"]]
-
-        # create functions representing the physical parameters received as parameters
-        functions = [
-            Function(
-                name=name,
-                grid=self.model.grid,
-                space_order=self.model.space_order,
-                parameter=True,
-            )
-            for name in args
-        ]
-
-        # Assignment of values to physical parameters functions based on the values in 'v'
-        for function, value in zip(functions, v):
-            initialize_function(function, value, self.model.padsizes)
-
-        # Update 'karguments' to contain the values of the parameters defined in 'args'
-        self.karguments.update(dict(zip(args, functions)))
-
-        # solve
-        solver = IsoElasticWaveSolver(
-            self.model, geometry, space_order=self.space_order
-        )
-        rec_data = list(solver.forward(**self.karguments)[0:4])
-
-        for ii, d in enumerate(rec_data):
-            rec_data[ii] = d.resample(geometry.dt).data[:][: geometry.nt].T
-        return rec_data
-
-    def _fwd_allshots(self, v: NDArray) -> NDArray:
-        """Forward modelling for all shots
-
-        Parameters
-        -----------
-        v : :obj:`np.ndarray`
-            Velocity Model
-
-        Returns
-        -------
-        dtot : :obj:`np.ndarray`
-            Data for all shots
-
-        """
-        nsrc = self.geometry.src_positions.shape[0]
-        dtot = []
-
-        for isrc in range(nsrc):
-            d = self._fwd_oneshot(isrc, v)
-            dtot.append(deepcopy(d))
-
-        # Adjust dimensions
-        rec_data = list(zip(*dtot))
-
-        return np.array(rec_data)
-
-    def _grad_oneshot(self, isrc, dobs):
-        """Adjoint gradient modelling for one shot
-
-        Parameters
-        ----------
-        isrc : :obj:`float`
-            Index of source to model
-        dobs : :obj:`np.ndarray`
-            Observed data to inject
-
-        Returns
-        -------
-        model : :obj:`np.ndarray`
-            Model
-
-        """
-        # create geometry for single source
-        geometry = AcquisitionGeometry(
-            self.model,
-            self.geometry.rec_positions,
-            self.geometry.src_positions[isrc, :],
-            self.geometry.t0,
-            self.geometry.tn,
-            f0=self.geometry.f0,
-            src_type=self.geometry.src_type,
-        )
-        # create boundary data
-        rec_vx = self.geometry.rec.copy()
-        rec_vx.data[:] = dobs[1].T[:]
-
-        rec_vy = self.geometry.rec.copy()
-        rec_vy.data[:] = dobs[2].T[:]
-
-        rec_vz = self.geometry.rec.copy()
-        rec_vz.data[:] = dobs[3].T[:]
-
-        solver = IsoElasticWaveSolver(
-            self.model, geometry, space_order=self.space_order
-        )
-
-        # If "par" was not passed as a parameter to forward execution, use the operator's default value
-        self.karguments["par"] = self.karguments.get("par", self.par)
-
-        # source wavefield
-        if hasattr(self, "src_wavefield"):
-            u0 = self.src_wavefield[isrc]
-        else:
-            par = self.karguments.get("par")
-            u0 = solver.forward(save=True, par=par)[4]
-
-        grad1, grad2, grad3 = solver.jacobian_adjoint(
-            rec_vx,
-            rec_vz,
-            u0,
-            rec_vy=rec_vy,
-            checkpointing=self.checkpointing,
-            **self.karguments
-        )[0:3]
-
-        return grad1, grad2, grad3
-
-    def _grad_allshots(self, dobs: NDArray) -> NDArray:
-        """Adjoint Gradient modelling for all shots
-
-        Parameters
-        ----------
-        dobs : :obj:`np.ndarray`
-            Observed data to inject.
-
-            The shape of dobs is (3, nsrc, nrecs. nt):
-
-                dobs[0] = rec_tau
-                dobs[1] = rec_vx
-                dobs[2] = rec_vy
-        Returns
-        -------
-        model : :obj:`np.ndarray`
-            Model
-
-        """
-        nsrc = self.geometry.src_positions.shape[0]
-
-        shape = self.model.shape
-        mtot = np.zeros((3, shape[0], shape[1], shape[2]), dtype=np.float32)
-
-        for isrc in range(nsrc):
-            # For each dobs get data equivalent to isrc shot
-            isrc_rec = [rec[isrc] for rec in dobs]
-
-            grads = self._grad_oneshot(isrc, isrc_rec)
-
-            # post-process data
-            for ii, g in enumerate(grads):
-                mtot[ii] += self._crop_model(g.data, self.model.nbl)
-        return mtot
-
-    def _register_multiplications(self, op_name: str) -> None:
-        self.op_name = op_name
-        if op_name == "fwd":
-            self._acoustic_matvec = self._fwd_allshots
-            self._acoustic_rmatvec = self._grad_allshots
-        else:
-            raise Exception("The operator's name '%s' is not valid." % op_name)
-
-    def create_receiver(
-        self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
-    ):
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-
-        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
-        ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
-        rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
-
-        nrec = len(rx)
-
-        rec_coordinates = np.empty((nrec, 3))
-        rec_coordinates[:, 0] = rx
-        rec_coordinates[:, 1] = ry
-        rec_coordinates[:, -1] = rz
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(
-            name=name,
-            grid=self.geometry.grid,
-            time_range=time_axis,
-            npoint=nrec,
-            coordinates=rec_coordinates,
-        )
-
-    def create_source(
-        self,
-        name,
-        sx=None,
-        sy=None,
-        sz=None,
-        t0=None,
-        tn=None,
-        dt=None,
-        f0=None,
-        src_type=None,
-    ):
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-        f0 = f0 or self.geometry.f0
-
-        src_type = src_type or self.geometry.src_type
-
-        sx = sx or self.geometry.src_positions[:, 0]
-        sy = sy or self.geometry.src_positions[:, 1]
-        sz = sz or self.geometry.src_positions[:, -1]
-
-        nsrc = len(sx)
-
-        src_coordinates = np.empty((nsrc, 3))
-        src_coordinates[:, 0] = sx
-        src_coordinates[:, 1] = sy
-        src_coordinates[:, -1] = sz
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-
-        return sources[src_type](
-            name=name,
-            grid=self.geometry.grid,
-            f0=f0,
-            time_range=time_axis,
-            npoint=nsrc,
-            coordinates=src_coordinates,
-            t0=t0,
-        )
-
-    def __mul__(self, x: Union[float, LinearOperator]) -> LinearOperator:
-        # data must be a np.array
-        if not isinstance(x, np.ndarray):
-            x = np.array(x)
-        return super().dot(x)
-
-    def add_args(self, **kwargs):
-        self.karguments = kwargs
-
-    def forward(self, x: NDArray, **kwargs):
-        # save current op_name to get back to it after the forward modelling
-        save_op_name = self.op_name
-
-        # Update operation's type forward
-        self._register_multiplications("fwd")
-
-        # Add arguments to self and execute _matvec
-        self.add_args(**kwargs)
-        y = self._matvec(x)
-
-        # Reshape data to dimsd format
-        y = y.reshape(getattr(self, "dimsd"))
-
-        # Restore operation's type that was used before this forward modelling
-        self._register_multiplications(save_op_name)
-        return y
-
-    @reshaped
-    def _matvec(self, x: NDArray) -> NDArray:
-        y = self._acoustic_matvec(x)
-        return y
-
-    @reshaped
-    def _rmatvec(self, x: NDArray) -> NDArray:
-        y = self._acoustic_rmatvec(x)
-        return y
 
 
 class _ViscoAcousticWave(LinearOperator):
