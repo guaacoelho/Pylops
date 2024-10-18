@@ -152,12 +152,13 @@ class _AcousticWave(LinearOperator):
         op_name: str = "born",
         src_y: NDArray = None,
         rec_y: NDArray = None,
+        dt: int = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
 
         # create model
-        self._create_model(shape, origin, spacing, vp, space_order, nbl)
+        self._create_model(shape, origin, spacing, vp, space_order, nbl, dt)
         self._create_geometry(
             src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0
         )
@@ -181,6 +182,7 @@ class _AcousticWave(LinearOperator):
         vp: NDArray,
         space_order: int = 6,
         nbl: int = 20,
+        dt: int = None,
     ) -> None:
         """Create model
 
@@ -210,6 +212,7 @@ class _AcousticWave(LinearOperator):
             spacing=spacing,
             nbl=nbl,
             bcs="damp",
+            dt=dt,
         )
 
     def _create_geometry(
@@ -687,6 +690,7 @@ class AcousticWave2D(_AcousticWave):
         dtype: DTypeLike = "float32",
         name: str = "A",
         op_name: str = "born",
+        dt: int = None,
     ) -> None:
 
         if len(shape) != 2:
@@ -713,6 +717,7 @@ class AcousticWave2D(_AcousticWave):
             dtype=dtype,
             name=name,
             op_name=op_name,
+            dt=dt,
         )
 
     @staticmethod
@@ -744,6 +749,7 @@ class AcousticWave3D(_AcousticWave):
         dtype: DTypeLike = "float32",
         name: str = "A",
         op_name: str = "born",
+        dt: int = None,
     ) -> None:
 
         if len(shape) != 3:
@@ -772,6 +778,7 @@ class AcousticWave3D(_AcousticWave):
             dtype=dtype,
             name=name,
             op_name=op_name,
+            dt=dt,
         )
 
     @staticmethod
@@ -1677,12 +1684,13 @@ class _ViscoAcousticWave(LinearOperator):
         op_name: str = "fwd",
         src_y: NDArray = None,
         rec_y: NDArray = None,
+        dt: int = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
 
         # create model
-        self._create_model(shape, origin, spacing, vp, qp, b, space_order, nbl)
+        self._create_model(shape, origin, spacing, vp, qp, b, space_order, nbl, dt)
         self._create_geometry(
             src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0
         )
@@ -1710,6 +1718,7 @@ class _ViscoAcousticWave(LinearOperator):
         b: NDArray,
         space_order: int = 6,
         nbl: int = 20,
+        dt: int = None,
     ) -> None:
         """Create model
 
@@ -1744,6 +1753,7 @@ class _ViscoAcousticWave(LinearOperator):
             dtype=np.float32,
             spacing=spacing,
             nbl=nbl,
+            dt=dt,
         )
 
     def _create_geometry(
@@ -1999,6 +2009,7 @@ class ViscoAcousticWave2D(_ViscoAcousticWave):
         dtype: DTypeLike = "float32",
         name: str = "A",
         op_name: str = "fwd",
+        dt: int = None,
     ) -> None:
 
         if len(shape) != 2:
@@ -2029,6 +2040,7 @@ class ViscoAcousticWave2D(_ViscoAcousticWave):
             dtype=dtype,
             name=name,
             op_name=op_name,
+            dt=dt,
         )
 
     @staticmethod
@@ -2064,6 +2076,7 @@ class ViscoAcousticWave3D(_ViscoAcousticWave):
         dtype: DTypeLike = "float32",
         name: str = "A",
         op_name: str = "fwd",
+        dt: int = None,
     ) -> None:
 
         if len(shape) != 3:
@@ -2096,6 +2109,7 @@ class ViscoAcousticWave3D(_ViscoAcousticWave):
             dtype=dtype,
             name=name,
             op_name=op_name,
+            dt=dt,
         )
 
     @staticmethod
