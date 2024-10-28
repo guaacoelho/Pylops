@@ -14,6 +14,7 @@ import numpy as np
 
 from pylops import LinearOperator
 from pylops.utils import deps
+from pylops.utils.utils import filter_kwargs
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
 
@@ -166,6 +167,7 @@ class _AcousticWave(LinearOperator):
         self.checkpointing = checkpointing
         self.karguments = {}
         self._kwargs = kwargs
+        self._filtered_kwargs = filter_kwargs(**kwargs)
 
         super().__init__(
             dtype=np.dtype(dtype),
@@ -328,7 +330,7 @@ class _AcousticWave(LinearOperator):
             f0=self.geometry.f0,
             src_type=self.geometry.src_type,
         )
-        solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order, **self._kwargs)
+        solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order, **self._filtered_kwargs)
 
         # assign source location to source object with custom wavelet
         if hasattr(self, "wav"):
@@ -430,7 +432,7 @@ class _AcousticWave(LinearOperator):
         )
 
         # solve
-        solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order, **self._kwargs)
+        solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order, **self._filtered_kwargs)
 
         nsrc = self.geometry.src_positions.shape[0]
         dtot = []
@@ -505,7 +507,7 @@ class _AcousticWave(LinearOperator):
             src_type=self.geometry.src_type,
         )
 
-        solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order, **self._kwargs)
+        solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order, **self._filtered_kwargs)
 
         nsrc = self.geometry.src_positions.shape[0]
         mtot = np.zeros(self.model.shape, dtype=np.float32)
@@ -585,7 +587,7 @@ class _AcousticWave(LinearOperator):
         )
 
         # solve
-        solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order, **self._kwargs)
+        solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order, **self._filtered_kwargs)
 
         nsrc = self.geometry.src_positions.shape[0]
         dtot = []
@@ -1733,6 +1735,7 @@ class _ViscoAcousticWave(LinearOperator):
         self.time_order = time_order
         self.karguments = {}
         self._kwargs = kwargs
+        self._filtered_kwargs = filter_kwargs(**kwargs)
 
         super().__init__(
             dtype=np.dtype(dtype),
@@ -1906,7 +1909,7 @@ class _ViscoAcousticWave(LinearOperator):
             space_order=self.space_order,
             kernel=self.kernel,
             time_order=self.time_order,
-            **self._kwargs
+            **self._filtered_kwargs
         )
         nsrc = self.geometry.src_positions.shape[0]
         dtot = []
