@@ -88,12 +88,3 @@ class Report(ScoobyReport):
             text_width=text_width,
             sort=sort,
         )
-
-def filter_kwargs(**kwargs):
-    to_devito = {"disk_swap": kwargs.get("disk_swap"),
-                 "disks": kwargs.get("disks"), 
-                 "ooc_folder": kwargs.get("ooc_folder"), 
-                 "ooc_folder_path": kwargs.get("ooc_folder_path")
-                }
-    to_devito = {k:v for k, v in to_devito.items() if v is not None}
-    return to_devito
