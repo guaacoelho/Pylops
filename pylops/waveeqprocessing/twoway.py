@@ -469,6 +469,9 @@ class _AcousticWave(LinearOperator):
             Model
 
         """
+        # set disk_swap bool
+        dswap = self._dswap_opt.get("disk_swap", False)
+
         # create boundary data
         recs = self.geometry.rec.copy()
         recs.data[:] = dobs.T[:]
@@ -482,7 +485,8 @@ class _AcousticWave(LinearOperator):
             u0 = self.src_wavefield[isrc]
         else:
             u0 = solver.forward(
-                save=True, src=None if not hasattr(self, "wav") else self.wav
+                save=True if not dswap else False,
+                src=None if not hasattr(self, "wav") else self.wav,
             )[1]
 
         # adjoint modelling (reverse wavefield plus imaging condition)
@@ -599,7 +603,9 @@ class _AcousticWave(LinearOperator):
 
         # solve
         solver = AcousticWaveSolver(
-            self.model, geometry, space_order=self.space_order, **self._dswap_opt
+            self.model,
+            geometry,
+            space_order=self.space_order,
         )
 
         nsrc = self.geometry.src_positions.shape[0]
