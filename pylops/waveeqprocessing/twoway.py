@@ -741,7 +741,10 @@ class AcousticWave2D(_AcousticWave):
         name: str = "A",
         op_name: str = "born",
         dt: int = None,
-        **kwargs,
+        disk_swap: bool = False,
+        disks: int = 1,
+        ooc_folder: str = None,
+        ooc_folder_path: str = None,
     ) -> None:
 
         if len(shape) != 2:
@@ -769,7 +772,10 @@ class AcousticWave2D(_AcousticWave):
             name=name,
             op_name=op_name,
             dt=dt,
-            **kwargs,
+            disk_swap=disk_swap,
+            disks=disks,
+            ooc_folder=ooc_folder,
+            ooc_folder_path=ooc_folder_path,
         )
 
     @staticmethod
@@ -802,7 +808,10 @@ class AcousticWave3D(_AcousticWave):
         name: str = "A",
         op_name: str = "born",
         dt: int = None,
-        **kwargs,
+        disk_swap: bool = False,
+        disks: int = 1,
+        ooc_folder: str = None,
+        ooc_folder_path: str = None,
     ) -> None:
 
         if len(shape) != 3:
@@ -832,7 +841,10 @@ class AcousticWave3D(_AcousticWave):
             name=name,
             op_name=op_name,
             dt=dt,
-            **kwargs,
+            disk_swap=disk_swap,
+            disks=disks,
+            ooc_folder=ooc_folder,
+            ooc_folder_path=ooc_folder_path,
         )
 
     @staticmethod
@@ -929,6 +941,10 @@ class _ElasticWave(LinearOperator):
         dt: int = None,
         src_y: NDArray = None,
         rec_y: NDArray = None,
+        disk_swap: bool = False,
+        disks: int = 1,
+        ooc_folder: str = None,
+        ooc_folder_path: str = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -942,6 +958,12 @@ class _ElasticWave(LinearOperator):
         self.par = par
         self.karguments = {}
         dim = self.model.dim
+        self._dswap_opt = {
+            "disk_swap": disk_swap,
+            "disks": disks,
+            "ooc_folder": ooc_folder,
+            "ooc_folder_path": ooc_folder_path,
+        }
 
         n_input = 3
         num_outs = dim + 1
@@ -1068,7 +1090,7 @@ class _ElasticWave(LinearOperator):
             f0=None if f0 is None else f0 / 1000,
         )
 
-    def _fwd_oneshot(self, solver, v: NDArray) -> NDArray:
+    def _fwd_oneshot(self, solver: IsoElasticWaveSolver, v: NDArray) -> NDArray:
         """Forward modelling for one shot
 
         Parameters
@@ -1160,7 +1182,7 @@ class _ElasticWave(LinearOperator):
 
         return np.array(rec_data)
 
-    def _grad_oneshot(self, isrc, dobs, solver):
+    def _grad_oneshot(self, isrc, dobs, solver: IsoElasticWaveSolver):
         """Adjoint gradient modelling for one shot
 
         Parameters
@@ -1197,6 +1219,9 @@ class _ElasticWave(LinearOperator):
             rec_p.data[:] = dobs[0].T[:]
             self.karguments["rec_p"] = rec_p
 
+        # set disk_swap bool
+        dswap = self._dswap_opt.get("disk_swap", False)
+
         # If "par" was not passed as a parameter to forward execution, use the operator's default value
         self.karguments["par"] = self.karguments.get("par", self.par)
 
@@ -1205,7 +1230,7 @@ class _ElasticWave(LinearOperator):
             u0 = self.src_wavefield[isrc]
         else:
             par = self.karguments.get("par")
-            u0 = solver.forward(save=True, par=par)[dim + 1]
+            u0 = solver.forward(save=True if not dswap else False, par=par)[dim + 1]
 
         # adjoint modelling (reverse wavefield plus imaging condition)
         grad1, grad2, grad3 = solver.jacobian_adjoint(
@@ -1265,7 +1290,7 @@ class _ElasticWave(LinearOperator):
             mtot = np.zeros((3, shape[0], shape[1], shape[2]), dtype=np.float32)
 
         solver = IsoElasticWaveSolver(
-            self.model, geometry, space_order=self.space_order
+            self.model, geometry, space_order=self.space_order, **self._dswap_opt
         )
 
         for isrc in range(nsrc):
@@ -1479,6 +1504,10 @@ class ElasticWave2D(_ElasticWave):
         par: str = "lam-mu",
         op_name: str = "fwd",
         dt: int = None,
+        disk_swap: bool = False,
+        disks: int = 1,
+        ooc_folder: str = None,
+        ooc_folder_path: str = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -1511,6 +1540,10 @@ class ElasticWave2D(_ElasticWave):
             par=par,
             op_name=op_name,
             dt=dt,
+            disk_swap=disk_swap,
+            disks=disks,
+            ooc_folder=ooc_folder,
+            ooc_folder_path=ooc_folder_path,
         )
 
     @staticmethod
@@ -1601,6 +1634,10 @@ class ElasticWave3D(_ElasticWave):
         par: str = "lam-mu",
         op_name: str = "fwd",
         dt: int = None,
+        disk_swap: bool = False,
+        disks: int = 1,
+        ooc_folder: str = None,
+        ooc_folder_path: str = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -1635,6 +1672,10 @@ class ElasticWave3D(_ElasticWave):
             par=par,
             op_name=op_name,
             dt=dt,
+            disk_swap=disk_swap,
+            disks=disks,
+            ooc_folder=ooc_folder,
+            ooc_folder_path=ooc_folder_path,
         )
 
     @staticmethod
