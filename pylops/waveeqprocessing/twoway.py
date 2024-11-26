@@ -549,22 +549,13 @@ class _AcousticWave(LinearOperator):
             Data
 
         """
-        # create geometry for single source
-        geometry = AcquisitionGeometry(
-            self.model,
-            self.geometry.rec_positions,
-            self.geometry.src_positions[isrc, :],
-            self.geometry.t0,
-            self.geometry.tn,
-            f0=self.geometry.f0,
-            src_type=self.geometry.src_type,
-        )
-
-        # solve
-        solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order)
-
         # create function representing the physical parameter received as parameter
-        function = Function(name="vp", grid=self.model.grid, space_order=self.model.space_order, parameter=True)
+        function = Function(
+            name="vp",
+            grid=self.model.grid,
+            space_order=self.model.space_order,
+            parameter=True,
+        )
 
         # Assignment of values to physical parameters functions based on the values in 'v'
         initialize_function(function, v, self.model.padsizes)
