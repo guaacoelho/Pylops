@@ -152,10 +152,12 @@ class _AcousticWave(LinearOperator):
         src_y: NDArray = None,
         rec_y: NDArray = None,
         dt: int = None,
-        disk_swap: bool = False,
-        disks: int = 1,
-        ooc_folder: str = None,
-        ooc_folder_path: str = None,
+        dswap: bool = False,
+        dswap_disks: int = 1,
+        dswap_folder: str = None,
+        dswap_folder_path: str = None,
+        dswap_compression: str = None,
+        dswap_compression_value: float | int = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -168,10 +170,12 @@ class _AcousticWave(LinearOperator):
         self.checkpointing = checkpointing
         self.karguments = {}
         self._dswap_opt = {
-            "disk_swap": disk_swap,
-            "disks": disks,
-            "ooc_folder": ooc_folder,
-            "ooc_folder_path": ooc_folder_path,
+            "dswap": dswap,
+            "dswap_disks": dswap_disks,
+            "dswap_folder": dswap_folder,
+            "dswap_folder_path": dswap_folder_path,
+            "dswap_compression": dswap_compression,
+            "dswap_compression_value": dswap_compression_value,
         }
 
         super().__init__(
@@ -470,7 +474,7 @@ class _AcousticWave(LinearOperator):
 
         """
         # set disk_swap bool
-        dswap = self._dswap_opt.get("disk_swap", False)
+        dswap = self._dswap_opt.get("dswap", False)
 
         # create boundary data
         recs = self.geometry.rec.copy()
@@ -732,10 +736,12 @@ class AcousticWave2D(_AcousticWave):
         name: str = "A",
         op_name: str = "born",
         dt: int = None,
-        disk_swap: bool = False,
-        disks: int = 1,
-        ooc_folder: str = None,
-        ooc_folder_path: str = None,
+        dswap: bool = False,
+        dswap_disks: int = 1,
+        dswap_folder: str = None,
+        dswap_folder_path: str = None,
+        dswap_compression: str = None,
+        dswap_compression_value: float | int = None,
     ) -> None:
 
         if len(shape) != 2:
@@ -763,10 +769,12 @@ class AcousticWave2D(_AcousticWave):
             name=name,
             op_name=op_name,
             dt=dt,
-            disk_swap=disk_swap,
-            disks=disks,
-            ooc_folder=ooc_folder,
-            ooc_folder_path=ooc_folder_path,
+            dswap=dswap,
+            dswap_disks=dswap_disks,
+            dswap_folder=dswap_folder,
+            dswap_folder_path=dswap_folder_path,
+            dswap_compression=dswap_compression,
+            dswap_compression_value=dswap_compression_value,
         )
 
     @staticmethod
@@ -799,10 +807,12 @@ class AcousticWave3D(_AcousticWave):
         name: str = "A",
         op_name: str = "born",
         dt: int = None,
-        disk_swap: bool = False,
-        disks: int = 1,
-        ooc_folder: str = None,
-        ooc_folder_path: str = None,
+        dswap: bool = False,
+        dswap_disks: int = 1,
+        dswap_folder: str = None,
+        dswap_folder_path: str = None,
+        dswap_compression: str = None,
+        dswap_compression_value: float | int = None,
     ) -> None:
 
         if len(shape) != 3:
@@ -832,10 +842,12 @@ class AcousticWave3D(_AcousticWave):
             name=name,
             op_name=op_name,
             dt=dt,
-            disk_swap=disk_swap,
-            disks=disks,
-            ooc_folder=ooc_folder,
-            ooc_folder_path=ooc_folder_path,
+            dswap=dswap,
+            dswap_disks=dswap_disks,
+            dswap_folder=dswap_folder,
+            dswap_folder_path=dswap_folder_path,
+            dswap_compression=dswap_compression,
+            dswap_compression_value=dswap_compression_value,
         )
 
     @staticmethod
@@ -932,10 +944,10 @@ class _ElasticWave(LinearOperator):
         dt: int = None,
         src_y: NDArray = None,
         rec_y: NDArray = None,
-        disk_swap: bool = False,
-        disks: int = 1,
-        ooc_folder: str = None,
-        ooc_folder_path: str = None,
+        dswap: bool = False,
+        dswap_disks: int = 1,
+        dswap_folder: str = None,
+        dswap_folder_path: str = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -950,10 +962,10 @@ class _ElasticWave(LinearOperator):
         self.karguments = {}
         dim = self.model.dim
         self._dswap_opt = {
-            "disk_swap": disk_swap,
-            "disks": disks,
-            "ooc_folder": ooc_folder,
-            "ooc_folder_path": ooc_folder_path,
+            "dswap": dswap,
+            "dswap_disks": dswap_disks,
+            "dswap_folder": dswap_folder,
+            "dswap_folder_path": dswap_folder_path,
         }
 
         n_input = 3
@@ -1211,7 +1223,7 @@ class _ElasticWave(LinearOperator):
             self.karguments["rec_p"] = rec_p
 
         # set disk_swap bool
-        dswap = self._dswap_opt.get("disk_swap", False)
+        dswap = self._dswap_opt.get("dswap", False)
 
         # If "par" was not passed as a parameter to forward execution, use the operator's default value
         self.karguments["par"] = self.karguments.get("par", self.par)
@@ -1495,10 +1507,10 @@ class ElasticWave2D(_ElasticWave):
         par: str = "lam-mu",
         op_name: str = "fwd",
         dt: int = None,
-        disk_swap: bool = False,
-        disks: int = 1,
-        ooc_folder: str = None,
-        ooc_folder_path: str = None,
+        dswap: bool = False,
+        dswap_disks: int = 1,
+        dswap_folder: str = None,
+        dswap_folder_path: str = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -1531,10 +1543,10 @@ class ElasticWave2D(_ElasticWave):
             par=par,
             op_name=op_name,
             dt=dt,
-            disk_swap=disk_swap,
-            disks=disks,
-            ooc_folder=ooc_folder,
-            ooc_folder_path=ooc_folder_path,
+            dswap=dswap,
+            dswap_disks=dswap_disks,
+            dswap_folder=dswap_folder,
+            dswap_folder_path=dswap_folder_path,
         )
 
     @staticmethod
@@ -1625,10 +1637,10 @@ class ElasticWave3D(_ElasticWave):
         par: str = "lam-mu",
         op_name: str = "fwd",
         dt: int = None,
-        disk_swap: bool = False,
-        disks: int = 1,
-        ooc_folder: str = None,
-        ooc_folder_path: str = None,
+        dswap: bool = False,
+        dswap_disks: int = 1,
+        dswap_folder: str = None,
+        dswap_folder_path: str = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -1663,10 +1675,10 @@ class ElasticWave3D(_ElasticWave):
             par=par,
             op_name=op_name,
             dt=dt,
-            disk_swap=disk_swap,
-            disks=disks,
-            ooc_folder=ooc_folder,
-            ooc_folder_path=ooc_folder_path,
+            dswap=dswap,
+            dswap_disks=dswap_disks,
+            dswap_folder=dswap_folder,
+            dswap_folder_path=dswap_folder_path,
         )
 
     @staticmethod
@@ -1771,10 +1783,12 @@ class _ViscoAcousticWave(LinearOperator):
         src_y: NDArray = None,
         rec_y: NDArray = None,
         dt: int = None,
-        disk_swap: bool = False,
-        disks: int = 1,
-        ooc_folder: str = None,
-        ooc_folder_path: str = None,
+        dswap: bool = False,
+        dswap_disks: int = 1,
+        dswap_folder: str = None,
+        dswap_folder_path: str = None,
+        dswap_compression: str = None,
+        dswap_compression_value: float | int = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -1789,10 +1803,12 @@ class _ViscoAcousticWave(LinearOperator):
         self.time_order = time_order
         self.karguments = {}
         self._dswap_opt = {
-            "disk_swap": disk_swap,
-            "disks": disks,
-            "ooc_folder": ooc_folder,
-            "ooc_folder_path": ooc_folder_path,
+            "dswap": dswap,
+            "dswap_disks": dswap_disks,
+            "dswap_folder": dswap_folder,
+            "dswap_folder_path": dswap_folder_path,
+            "dswap_compression": dswap_compression,
+            "dswap_compression_value": dswap_compression_value,
         }
 
         super().__init__(
