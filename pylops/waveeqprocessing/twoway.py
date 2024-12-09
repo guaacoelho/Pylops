@@ -27,9 +27,8 @@ if devito_message is None:
     from examples.seismic.acoustic import AcousticWaveSolver
     from examples.seismic.source import TimeAxis
     from examples.seismic.stiffness import IsoElasticWaveSolver, ISOSeismicModel
-    from examples.seismic.utils import sources
+    from examples.seismic.utils import PointSource, sources
     from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
-    from examples.seismic.utils import PointSource
 
 
 class _CustomSource(PointSource):
@@ -326,7 +325,9 @@ class _AcousticWave(LinearOperator):
             f0=self.geometry.f0,
             src_type=self.geometry.src_type,
         )
-        solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order)
+        solver = AcousticWaveSolver(
+            self.model, geometry, space_order=self.space_order, **self._dswap_opt
+        )
 
         # assign source location to source object with custom wavelet
         if hasattr(self, "wav"):
@@ -428,7 +429,9 @@ class _AcousticWave(LinearOperator):
         )
 
         # solve
-        solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order)
+        solver = AcousticWaveSolver(
+            self.model, geometry, space_order=self.space_order, **self._dswap_opt
+        )
 
         nsrc = self.geometry.src_positions.shape[0]
         dtot = []
@@ -440,7 +443,7 @@ class _AcousticWave(LinearOperator):
         dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
         return dtot
 
-    def _bornadj_oneshot(self, isrc, dobs):
+    def _bornadj_oneshot(self, solver: AcousticWaveSolver, isrc, dobs):
         """Adjoint born modelling for one shot
 
         Parameters
@@ -456,21 +459,12 @@ class _AcousticWave(LinearOperator):
             Model
 
         """
-        # create geometry for single source
-        geometry = AcquisitionGeometry(
-            self.model,
-            self.geometry.rec_positions,
-            self.geometry.src_positions[isrc, :],
-            self.geometry.t0,
-            self.geometry.tn,
-            f0=self.geometry.f0,
-            src_type=self.geometry.src_type,
-        )
+        # set disk_swap bool
+        dswap = self._dswap_opt.get("dswap", False)
+
         # create boundary data
         recs = self.geometry.rec.copy()
         recs.data[:] = dobs.T[:]
-
-        solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order)
 
         # assign source location to source object with custom wavelet
         if hasattr(self, "wav"):
@@ -481,7 +475,8 @@ class _AcousticWave(LinearOperator):
             u0 = self.src_wavefield[isrc]
         else:
             u0 = solver.forward(
-                save=True, src=None if not hasattr(self, "wav") else self.wav
+                save=True if not dswap else False,
+                src=None if not hasattr(self, "wav") else self.wav,
             )[1]
 
         # adjoint modelling (reverse wavefield plus imaging condition)
@@ -504,15 +499,31 @@ class _AcousticWave(LinearOperator):
             Model
 
         """
+        # create geometry for single source
+        geometry = AcquisitionGeometry(
+            self.model,
+            self.geometry.rec_positions,
+            self.geometry.src_positions[0, :],
+            self.geometry.t0,
+            self.geometry.tn,
+            f0=self.geometry.f0,
+            src_type=self.geometry.src_type,
+        )
+
+        solver = AcousticWaveSolver(
+            self.model, geometry, space_order=self.space_order, **self._dswap_opt
+        )
+
         nsrc = self.geometry.src_positions.shape[0]
         mtot = np.zeros(self.model.shape, dtype=np.float32)
 
         for isrc in range(nsrc):
-            m = self._bornadj_oneshot(isrc, dobs[isrc])
+            solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
+            m = self._bornadj_oneshot(solver, isrc, dobs[isrc])
             mtot += self._crop_model(m.data, self.model.nbl)
         return mtot
 
-    def _fwd_oneshot(self, isrc: int, v: NDArray) -> NDArray:
+    def _fwd_oneshot(self, solver: AcousticWaveSolver, v: NDArray) -> NDArray:
         """Forward modelling for one shot
 
         Parameters
@@ -528,22 +539,13 @@ class _AcousticWave(LinearOperator):
             Data
 
         """
-        # create geometry for single source
-        geometry = AcquisitionGeometry(
-            self.model,
-            self.geometry.rec_positions,
-            self.geometry.src_positions[isrc, :],
-            self.geometry.t0,
-            self.geometry.tn,
-            f0=self.geometry.f0,
-            src_type=self.geometry.src_type,
-        )
-
-        # solve
-        solver = AcousticWaveSolver(self.model, geometry, space_order=self.space_order)
-
         # create function representing the physical parameter received as parameter
-        function = Function(name="vp", grid=self.model.grid, space_order=self.model.space_order, parameter=True)
+        function = Function(
+            name="vp",
+            grid=self.model.grid,
+            space_order=self.model.space_order,
+            parameter=True,
+        )
 
         # Assignment of values to physical parameters functions based on the values in 'v'
         initialize_function(function, v, self.model.padsizes)
@@ -552,7 +554,7 @@ class _AcousticWave(LinearOperator):
         self.karguments.update({"vp": function})
 
         d = solver.forward(**self.karguments)[0]
-        d = d.resample(geometry.dt).data[:][: geometry.nt].T
+        d = d.resample(solver.geometry.dt).data[:][: solver.geometry.nt].T
         return d
 
     def _fwd_allshots(self, v: NDArray) -> NDArray:
@@ -569,11 +571,30 @@ class _AcousticWave(LinearOperator):
             Data for all shots
 
         """
+        # create geometry for single source
+        geometry = AcquisitionGeometry(
+            self.model,
+            self.geometry.rec_positions,
+            self.geometry.src_positions[0, :],
+            self.geometry.t0,
+            self.geometry.tn,
+            f0=self.geometry.f0,
+            src_type=self.geometry.src_type,
+        )
+
+        # solve
+        solver = AcousticWaveSolver(
+            self.model,
+            geometry,
+            space_order=self.space_order,
+        )
+
         nsrc = self.geometry.src_positions.shape[0]
         dtot = []
 
         for isrc in range(nsrc):
-            d = self._fwd_oneshot(isrc, v)
+            solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
+            d = self._fwd_oneshot(solver, v)
             dtot.append(d)
         dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
         return dtot
@@ -701,12 +722,28 @@ class AcousticWave2D(_AcousticWave):
         name: str = "A",
         op_name: str = "born",
         dt: int = None,
+        dswap: bool = False,
+        dswap_disks: int = 1,
+        dswap_folder: str = None,
+        dswap_folder_path: str = None,
+        dswap_compression: str = None,
+        dswap_compression_value: float | int = None,
     ) -> None:
 
         if len(shape) != 2:
             raise Exception(
                 "Attempting to create a 3D operator using a 2D intended class!"
             )
+
+        # Create disk swap dict
+        self._dswap_opt = {
+            "dswap": dswap,
+            "dswap_disks": dswap_disks,
+            "dswap_folder": dswap_folder,
+            "dswap_folder_path": dswap_folder_path,
+            "dswap_compression": dswap_compression,
+            "dswap_compression_value": dswap_compression_value,
+        }
 
         super().__init__(
             shape=shape,
@@ -760,12 +797,28 @@ class AcousticWave3D(_AcousticWave):
         name: str = "A",
         op_name: str = "born",
         dt: int = None,
+        dswap: bool = False,
+        dswap_disks: int = 1,
+        dswap_folder: str = None,
+        dswap_folder_path: str = None,
+        dswap_compression: str = None,
+        dswap_compression_value: float | int = None,
     ) -> None:
 
         if len(shape) != 3:
             raise Exception(
                 "Attempting to create a 3D operator with a 2D intended class!"
             )
+
+        # Create disk swap dict
+        self._dswap_opt = {
+            "dswap": dswap,
+            "dswap_disks": dswap_disks,
+            "dswap_folder": dswap_folder,
+            "dswap_folder_path": dswap_folder_path,
+            "dswap_compression": dswap_compression,
+            "dswap_compression_value": dswap_compression_value,
+        }
 
         super().__init__(
             shape=shape,
@@ -1024,7 +1077,7 @@ class _ElasticWave(LinearOperator):
             f0=None if f0 is None else f0 / 1000,
         )
 
-    def _fwd_oneshot(self, solver, v: NDArray) -> NDArray:
+    def _fwd_oneshot(self, solver: IsoElasticWaveSolver, v: NDArray) -> NDArray:
         """Forward modelling for one shot
 
         Parameters
@@ -1116,7 +1169,7 @@ class _ElasticWave(LinearOperator):
 
         return np.array(rec_data)
 
-    def _grad_oneshot(self, isrc, dobs, solver):
+    def _grad_oneshot(self, isrc, dobs, solver: IsoElasticWaveSolver):
         """Adjoint gradient modelling for one shot
 
         Parameters
@@ -1170,7 +1223,7 @@ class _ElasticWave(LinearOperator):
             u0,
             rec_vy=None if dim == 2 else rec_vy,
             checkpointing=self.checkpointing,
-            **self.karguments
+            **self.karguments,
         )[0:3]
 
         return grad1, grad2, grad3
@@ -1695,6 +1748,12 @@ class _ViscoAcousticWave(LinearOperator):
         src_y: NDArray = None,
         rec_y: NDArray = None,
         dt: int = None,
+        dswap: bool = False,
+        dswap_disks: int = 1,
+        dswap_folder: str = None,
+        dswap_folder_path: str = None,
+        dswap_compression: str = None,
+        dswap_compression_value: float | int = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -1708,6 +1767,14 @@ class _ViscoAcousticWave(LinearOperator):
         self.kernel = kernel
         self.time_order = time_order
         self.karguments = {}
+        self._dswap_opt = {
+            "dswap": dswap,
+            "dswap_disks": dswap_disks,
+            "dswap_folder": dswap_folder,
+            "dswap_folder_path": dswap_folder_path,
+            "dswap_compression": dswap_compression,
+            "dswap_compression_value": dswap_compression_value,
+        }
 
         super().__init__(
             dtype=np.dtype(dtype),
@@ -1829,7 +1896,7 @@ class _ViscoAcousticWave(LinearOperator):
             f0=None if f0 is None else f0 * 1e-3,
         )
 
-    def _fwd_oneshot(self, isrc: int, v: NDArray) -> NDArray:
+    def _fwd_oneshot(self, solver: AcousticWaveSolver, v: NDArray) -> NDArray:
         """Forward modelling for one shot
 
         Parameters
@@ -1845,27 +1912,8 @@ class _ViscoAcousticWave(LinearOperator):
             Data
 
         """
-        # create geometry for single source
-        geometry = AcquisitionGeometry(
-            self.model,
-            self.geometry.rec_positions,
-            self.geometry.src_positions[isrc, :],
-            self.geometry.t0,
-            self.geometry.tn,
-            f0=self.geometry.f0,
-            src_type=self.geometry.src_type,
-        )
-
-        # solve
-        solver = ViscoacousticWaveSolver(
-            self.model,
-            geometry,
-            space_order=self.space_order,
-            kernel=self.kernel,
-            time_order=self.time_order,
-        )
         d = solver.forward(**self.karguments)[0]
-        d = d.resample(geometry.dt).data[:][: geometry.nt].T
+        d = d.resample(solver.geometry.dt).data[:][: solver.geometry.nt].T
         return d
 
     def _fwd_allshots(self, v: NDArray) -> NDArray:
@@ -1882,11 +1930,32 @@ class _ViscoAcousticWave(LinearOperator):
             Data for all shots
 
         """
+        # create geometry for single source
+        geometry = AcquisitionGeometry(
+            self.model,
+            self.geometry.rec_positions,
+            self.geometry.src_positions[0, :],
+            self.geometry.t0,
+            self.geometry.tn,
+            f0=self.geometry.f0,
+            src_type=self.geometry.src_type,
+        )
+
+        # solve
+        solver = ViscoacousticWaveSolver(
+            self.model,
+            geometry,
+            space_order=self.space_order,
+            kernel=self.kernel,
+            time_order=self.time_order,
+            **self._dswap_opt,
+        )
         nsrc = self.geometry.src_positions.shape[0]
         dtot = []
 
         for isrc in range(nsrc):
-            d = self._fwd_oneshot(isrc, v)
+            solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
+            d = self._fwd_oneshot(solver, v)
             dtot.append(d)
         dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
         return dtot
@@ -2020,6 +2089,7 @@ class ViscoAcousticWave2D(_ViscoAcousticWave):
         name: str = "A",
         op_name: str = "fwd",
         dt: int = None,
+        **kwargs,
     ) -> None:
 
         if len(shape) != 2:
@@ -2051,6 +2121,7 @@ class ViscoAcousticWave2D(_ViscoAcousticWave):
             name=name,
             op_name=op_name,
             dt=dt,
+            **kwargs,
         )
 
     @staticmethod
@@ -2087,6 +2158,7 @@ class ViscoAcousticWave3D(_ViscoAcousticWave):
         name: str = "A",
         op_name: str = "fwd",
         dt: int = None,
+        **kwargs,
     ) -> None:
 
         if len(shape) != 3:
@@ -2120,6 +2192,7 @@ class ViscoAcousticWave3D(_ViscoAcousticWave):
             name=name,
             op_name=op_name,
             dt=dt,
+            **kwargs,
         )
 
     @staticmethod
