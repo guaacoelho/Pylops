@@ -152,12 +152,6 @@ class _AcousticWave(LinearOperator):
         src_y: NDArray = None,
         rec_y: NDArray = None,
         dt: int = None,
-        dswap: bool = False,
-        dswap_disks: int = 1,
-        dswap_folder: str = None,
-        dswap_folder_path: str = None,
-        dswap_compression: str = None,
-        dswap_compression_value: float | int = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -169,14 +163,6 @@ class _AcousticWave(LinearOperator):
         )
         self.checkpointing = checkpointing
         self.karguments = {}
-        self._dswap_opt = {
-            "dswap": dswap,
-            "dswap_disks": dswap_disks,
-            "dswap_folder": dswap_folder,
-            "dswap_folder_path": dswap_folder_path,
-            "dswap_compression": dswap_compression,
-            "dswap_compression_value": dswap_compression_value,
-        }
 
         super().__init__(
             dtype=np.dtype(dtype),
@@ -749,6 +735,16 @@ class AcousticWave2D(_AcousticWave):
                 "Attempting to create a 3D operator using a 2D intended class!"
             )
 
+        # Create disk swap dict
+        self._dswap_opt = {
+            "dswap": dswap,
+            "dswap_disks": dswap_disks,
+            "dswap_folder": dswap_folder,
+            "dswap_folder_path": dswap_folder_path,
+            "dswap_compression": dswap_compression,
+            "dswap_compression_value": dswap_compression_value,
+        }
+
         super().__init__(
             shape=shape,
             origin=origin,
@@ -769,12 +765,6 @@ class AcousticWave2D(_AcousticWave):
             name=name,
             op_name=op_name,
             dt=dt,
-            dswap=dswap,
-            dswap_disks=dswap_disks,
-            dswap_folder=dswap_folder,
-            dswap_folder_path=dswap_folder_path,
-            dswap_compression=dswap_compression,
-            dswap_compression_value=dswap_compression_value,
         )
 
     @staticmethod
@@ -820,6 +810,16 @@ class AcousticWave3D(_AcousticWave):
                 "Attempting to create a 3D operator with a 2D intended class!"
             )
 
+        # Create disk swap dict
+        self._dswap_opt = {
+            "dswap": dswap,
+            "dswap_disks": dswap_disks,
+            "dswap_folder": dswap_folder,
+            "dswap_folder_path": dswap_folder_path,
+            "dswap_compression": dswap_compression,
+            "dswap_compression_value": dswap_compression_value,
+        }
+
         super().__init__(
             shape=shape,
             origin=origin,
@@ -842,12 +842,6 @@ class AcousticWave3D(_AcousticWave):
             name=name,
             op_name=op_name,
             dt=dt,
-            dswap=dswap,
-            dswap_disks=dswap_disks,
-            dswap_folder=dswap_folder,
-            dswap_folder_path=dswap_folder_path,
-            dswap_compression=dswap_compression,
-            dswap_compression_value=dswap_compression_value,
         )
 
     @staticmethod
