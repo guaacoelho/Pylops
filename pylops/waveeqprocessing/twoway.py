@@ -1408,15 +1408,18 @@ class _ViscoAcousticWave(LinearOperator):
         src_y: NDArray = None,
         rec_y: NDArray = None,
         dt: int = None,
-        dswap: bool = False,
-        dswap_disks: int = 1,
-        dswap_folder: str = None,
-        dswap_folder_path: str = None,
-        dswap_compression: str = None,
-        dswap_compression_value: float | int = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
+
+        is_2d = len(shape) == 2
+        is_3d = len(shape) == 3
+
+        if is_2d and (rec_y is not None or src_y is not None):
+            raise Exception("Attempting to create a 3D operator using a 2D intended class!")
+
+        if is_3d and (rec_y is None or src_y is None):
+            raise Exception("Attempting to create a 2D operator using a 3D intended class!")
 
         # create model
         self._create_model(shape, origin, spacing, vp, qp, b, space_order, nbl, dt)
@@ -1427,14 +1430,6 @@ class _ViscoAcousticWave(LinearOperator):
         self.kernel = kernel
         self.time_order = time_order
         self.karguments = {}
-        self._dswap_opt = {
-            "dswap": dswap,
-            "dswap_disks": dswap_disks,
-            "dswap_folder": dswap_folder,
-            "dswap_folder_path": dswap_folder_path,
-            "dswap_compression": dswap_compression,
-            "dswap_compression_value": dswap_compression_value,
-        }
 
         super().__init__(
             dtype=np.dtype(dtype),
@@ -1608,7 +1603,6 @@ class _ViscoAcousticWave(LinearOperator):
             space_order=self.space_order,
             kernel=self.kernel,
             time_order=self.time_order,
-            **self._dswap_opt,
         )
         nsrc = self.geometry.src_positions.shape[0]
         dtot = []
@@ -1712,6 +1706,14 @@ class _ViscoAcousticWave(LinearOperator):
     def add_args(self, **kwargs):
         self.karguments = kwargs
 
+    @staticmethod
+    def _crop_model(m: NDArray, nbl: int) -> NDArray:
+        """Remove absorbing boundaries from model"""
+        if len(m.shape) == 2:
+            return m[nbl:-nbl, nbl:-nbl]
+        else:
+            return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
+
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
         y = self._acoustic_matvec(x)
@@ -1723,145 +1725,9 @@ class _ViscoAcousticWave(LinearOperator):
         return y
 
 
-class ViscoAcousticWave2D(_ViscoAcousticWave):
-    def __init__(
-        self,
-        shape: InputDimsLike,
-        origin: SamplingLike,
-        spacing: SamplingLike,
-        vp: NDArray,
-        qp: NDArray,
-        b: NDArray,
-        src_x: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str = "Ricker",
-        space_order: int = 6,
-        kernel: str = "sls",
-        time_order: int = 2,
-        nbl: int = 20,
-        f0: float = 20.0,
-        checkpointing: bool = False,
-        dtype: DTypeLike = "float32",
-        name: str = "A",
-        op_name: str = "fwd",
-        dt: int = None,
-        **kwargs,
-    ) -> None:
-
-        if len(shape) != 2:
-            raise Exception(
-                "Attempting to create a 3D operator using a 2D intended class!"
-            )
-
-        super().__init__(
-            shape=shape,
-            origin=origin,
-            spacing=spacing,
-            vp=vp,
-            qp=qp,
-            b=b,
-            src_x=src_x,
-            src_z=src_z,
-            rec_x=rec_x,
-            rec_z=rec_z,
-            t0=t0,
-            tn=tn,
-            src_type=src_type,
-            space_order=space_order,
-            kernel=kernel,
-            time_order=time_order,
-            nbl=nbl,
-            f0=f0,
-            checkpointing=checkpointing,
-            dtype=dtype,
-            name=name,
-            op_name=op_name,
-            dt=dt,
-            **kwargs,
-        )
-
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        return m[nbl:-nbl, nbl:-nbl]
-
-
-class ViscoAcousticWave3D(_ViscoAcousticWave):
-    def __init__(
-        self,
-        shape: InputDimsLike,
-        origin: SamplingLike,
-        spacing: SamplingLike,
-        vp: NDArray,
-        qp: NDArray,
-        b: NDArray,
-        src_x: NDArray,
-        src_y: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_y: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str = "Ricker",
-        space_order: int = 6,
-        kernel: str = "sls",
-        time_order: int = 2,
-        nbl: int = 20,
-        f0: float = 20.0,
-        checkpointing: bool = False,
-        dtype: DTypeLike = "float32",
-        name: str = "A",
-        op_name: str = "fwd",
-        dt: int = None,
-        **kwargs,
-    ) -> None:
-
-        if len(shape) != 3:
-            raise Exception(
-                "Attempting to create a 2D operator with a 3D intended class!"
-            )
-
-        super().__init__(
-            shape=shape,
-            origin=origin,
-            spacing=spacing,
-            vp=vp,
-            qp=qp,
-            b=b,
-            src_x=src_x,
-            src_y=src_y,
-            src_z=src_z,
-            rec_x=rec_x,
-            rec_y=rec_y,
-            rec_z=rec_z,
-            t0=t0,
-            tn=tn,
-            src_type=src_type,
-            space_order=space_order,
-            kernel=kernel,
-            time_order=time_order,
-            nbl=nbl,
-            f0=f0,
-            checkpointing=checkpointing,
-            dtype=dtype,
-            name=name,
-            op_name=op_name,
-            dt=dt,
-            **kwargs,
-        )
-
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
-
-
 AcousticWave2D = _AcousticWave
 AcousticWave3D = _AcousticWave
 ElasticWave2D = _ElasticWave
 ElasticWave3D = _ElasticWave
+ViscoAcousticWave2D = _ViscoAcousticWave
+ViscoAcousticWave3D = _ViscoAcousticWave
