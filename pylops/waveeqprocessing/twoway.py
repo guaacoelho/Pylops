@@ -825,6 +825,15 @@ class _ElasticWave(LinearOperator):
         if devito_message is not None:
             raise NotImplementedError(devito_message)
 
+        is_2d = len(shape) == 2
+        is_3d = len(shape) == 3
+
+        if is_2d and (rec_y is not None or src_y is not None):
+            raise Exception("Attempting to create a 3D operator using a 2D intended class!")
+
+        if is_3d and (rec_y is None or src_y is None):
+            raise Exception("Attempting to create a 2D operator using a 3D intended class!")
+
         # create model
         self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl, dt)
         self._create_geometry(
@@ -1284,6 +1293,14 @@ class _ElasticWave(LinearOperator):
         self._register_multiplications(save_op_name)
         return y
 
+    @staticmethod
+    def _crop_model(m: NDArray, nbl: int) -> NDArray:
+        """Remove absorbing boundaries from model"""
+        if len(m.shape) == 2:
+            return m[nbl:-nbl, nbl:-nbl]
+        else:
+            return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
+
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
         y = self._acoustic_matvec(x)
@@ -1293,246 +1310,6 @@ class _ElasticWave(LinearOperator):
     def _rmatvec(self, x: NDArray) -> NDArray:
         y = self._acoustic_rmatvec(x)
         return y
-
-
-class ElasticWave2D(_ElasticWave):
-    """Devito Elastic propagator.
-
-    Parameters
-    ----------
-    shape : :obj:`tuple` or :obj:`numpy.ndarray`
-        Model shape ``(nx, nz)``
-    origin : :obj:`tuple` or :obj:`numpy.ndarray`
-        Model origin ``(ox, oz)``
-    spacing : :obj:`tuple` or  :obj:`numpy.ndarray`
-        Model spacing ``(dx, dz)``
-    vp : :obj:`numpy.ndarray`
-        Velocity model in m/s
-    src_x : :obj:`numpy.ndarray`
-        Source x-coordinates in m
-    src_z : :obj:`numpy.ndarray` or :obj:`float`
-        Source z-coordinates in m
-    rec_x : :obj:`numpy.ndarray`
-        Receiver x-coordinates in m
-    rec_z : :obj:`numpy.ndarray` or :obj:`float`
-        Receiver z-coordinates in m
-    t0 : :obj:`float`
-        Initial time
-    tn : :obj:`int`
-        Number of time samples
-    src_type : :obj:`str`
-        Source type
-    space_order : :obj:`int`, optional
-        Spatial ordering of FD stencil
-    nbl : :obj:`int`, optional
-        Number ordering of samples in absorbing boundaries
-    f0 : :obj:`float`, optional
-        Source peak frequency (Hz)
-    checkpointing : :obj:`bool`, optional
-        Use checkpointing (``True``) or not (``False``). Note that
-        using checkpointing is needed when dealing with large models
-        but it will slow down computations
-    dtype : :obj:`str`, optional
-        Type of elements in input array.
-    name : :obj:`str`, optional
-        Name of operator (to be used by :func:`pylops.utils.describe.describe`)
-
-    Attributes
-    ----------
-    shape : :obj:`tuple`
-        Operator shape
-    explicit : :obj:`bool`
-        Operator contains a matrix that can be solved explicitly (``True``) or
-        not (``False``)
-
-    """
-
-    def __init__(
-        self,
-        shape: InputDimsLike,
-        origin: SamplingLike,
-        spacing: SamplingLike,
-        vp: NDArray,
-        vs: NDArray,
-        rho: NDArray,
-        src_x: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str = "Ricker",
-        space_order: int = 6,
-        nbl: int = 20,
-        f0: float = 20.0,
-        checkpointing: bool = False,
-        dtype: DTypeLike = "float32",
-        name: str = "A",
-        par: str = "lam-mu",
-        op_name: str = "fwd",
-        dt: int = None,
-    ) -> None:
-        if devito_message is not None:
-            raise NotImplementedError(devito_message)
-
-        if len(shape) != 2:
-            raise Exception(
-                "Attempting to create a 3D operator using a 2D intended class!"
-            )
-
-        super().__init__(
-            shape=shape,
-            origin=origin,
-            spacing=spacing,
-            vp=vp,
-            vs=vs,
-            rho=rho,
-            src_x=src_x,
-            src_z=src_z,
-            rec_x=rec_x,
-            rec_z=rec_z,
-            t0=t0,
-            tn=tn,
-            src_type=src_type,
-            space_order=space_order,
-            nbl=nbl,
-            f0=f0,
-            checkpointing=checkpointing,
-            dtype=dtype,
-            name=name,
-            par=par,
-            op_name=op_name,
-            dt=dt,
-        )
-
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        return m[nbl:-nbl, nbl:-nbl]
-
-
-class ElasticWave3D(_ElasticWave):
-    """Devito Elastic propagator.
-
-    Parameters
-    ----------
-    shape : :obj:`tuple` or :obj:`numpy.ndarray`
-        Model shape ``(nx, nz)``
-    origin : :obj:`tuple` or :obj:`numpy.ndarray`
-        Model origin ``(ox, oz)``
-    spacing : :obj:`tuple` or  :obj:`numpy.ndarray`
-        Model spacing ``(dx, dz)``
-    vp : :obj:`numpy.ndarray`
-        Velocity model in m/s
-    src_x : :obj:`numpy.ndarray`
-        Source x-coordinates in m
-    src_y : :obj:`numpy.ndarray`
-        Source y-coordinates in m
-    src_z : :obj:`numpy.ndarray` or :obj:`float`
-        Source z-coordinates in m
-    rec_x : :obj:`numpy.ndarray`
-        Receiver x-coordinates in m
-    rec_y : :obj:`numpy.ndarray`
-        Receiver y-coordinates in m
-    rec_z : :obj:`numpy.ndarray` or :obj:`float`
-        Receiver z-coordinates in m
-    t0 : :obj:`float`
-        Initial time
-    tn : :obj:`int`
-        Number of time samples
-    src_type : :obj:`str`
-        Source type
-    space_order : :obj:`int`, optional
-        Spatial ordering of FD stencil
-    nbl : :obj:`int`, optional
-        Number ordering of samples in absorbing boundaries
-    f0 : :obj:`float`, optional
-        Source peak frequency (Hz)
-    checkpointing : :obj:`bool`, optional
-        Use checkpointing (``True``) or not (``False``). Note that
-        using checkpointing is needed when dealing with large models
-        but it will slow down computations
-    dtype : :obj:`str`, optional
-        Type of elements in input array.
-    name : :obj:`str`, optional
-        Name of operator (to be used by :func:`pylops.utils.describe.describe`)
-
-    Attributes
-    ----------
-    shape : :obj:`tuple`
-        Operator shape
-    explicit : :obj:`bool`
-        Operator contains a matrix that can be solved explicitly (``True``) or
-        not (``False``)
-
-    """
-
-    def __init__(
-        self,
-        shape: InputDimsLike,
-        origin: SamplingLike,
-        spacing: SamplingLike,
-        vp: NDArray,
-        vs: NDArray,
-        rho: NDArray,
-        src_x: NDArray,
-        src_y: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_y: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str = "Ricker",
-        space_order: int = 6,
-        nbl: int = 20,
-        f0: float = 20.0,
-        checkpointing: bool = False,
-        dtype: DTypeLike = "float32",
-        name: str = "A",
-        par: str = "lam-mu",
-        op_name: str = "fwd",
-        dt: int = None,
-    ) -> None:
-        if devito_message is not None:
-            raise NotImplementedError(devito_message)
-
-        if len(shape) != 3:
-            raise Exception(
-                "Attempting to create a 2D operator with a 3D intended class!"
-            )
-
-        super().__init__(
-            shape=shape,
-            origin=origin,
-            spacing=spacing,
-            vp=vp,
-            vs=vs,
-            rho=rho,
-            src_x=src_x,
-            src_y=src_y,
-            src_z=src_z,
-            rec_x=rec_x,
-            rec_y=rec_y,
-            rec_z=rec_z,
-            t0=t0,
-            tn=tn,
-            src_type=src_type,
-            space_order=space_order,
-            nbl=nbl,
-            f0=f0,
-            checkpointing=checkpointing,
-            dtype=dtype,
-            name=name,
-            par=par,
-            op_name=op_name,
-            dt=dt,
-        )
-
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
 
 
 class _ViscoAcousticWave(LinearOperator):
@@ -2086,3 +1863,5 @@ class ViscoAcousticWave3D(_ViscoAcousticWave):
 
 AcousticWave2D = _AcousticWave
 AcousticWave3D = _AcousticWave
+ElasticWave2D = _ElasticWave
+ElasticWave3D = _ElasticWave
