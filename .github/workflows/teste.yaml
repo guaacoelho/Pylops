@@ -13,10 +13,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          repository: guaacoelho/Pylops
-          ref: ${{ github.ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Get history and tags for SCM versioning to work
         run: |
