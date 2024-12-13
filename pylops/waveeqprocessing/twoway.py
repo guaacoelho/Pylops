@@ -73,7 +73,186 @@ class _CustomSource(PointSource):
         return self.wav
 
 
-class _AcousticWave(LinearOperator):
+class _Wave(LinearOperator):
+    
+    def _create_geometry(
+        self,
+        src_x: NDArray,
+        src_y: NDArray,
+        src_z: NDArray,
+        rec_x: NDArray,
+        rec_y: NDArray,
+        rec_z: NDArray,
+        t0: float,
+        tn: float,
+        src_type: str,
+        f0: float = 20.0,
+    ) -> None:
+        """Create geometry and time axis
+
+        Parameters
+        ----------
+        src_x : :obj:`numpy.ndarray`
+            Source x-coordinates in m
+        src_y : :obj:`numpy.ndarray`
+            Source y-coordinates in m
+        src_z : :obj:`numpy.ndarray` or :obj:`float`
+            Source z-coordinates in m
+        rec_x : :obj:`numpy.ndarray`
+            Receiver x-coordinates in m
+        rec_y : :obj:`numpy.ndarray`
+            Receiver y-coordinates in m
+        rec_z : :obj:`numpy.ndarray` or :obj:`float`
+            Receiver z-coordinates in m
+        t0 : :obj:`float`
+            Initial time
+        tn : :obj:`int`
+            Final time in ms
+        src_type : :obj:`str`
+            Source type
+        f0 : :obj:`float`, optional
+            Source peak frequency (Hz)
+
+        """
+
+        nsrc, nrec = len(src_x), len(rec_x)
+        src_coordinates = np.empty((nsrc, self.model.dim))
+        src_coordinates[:, 0] = src_x
+        src_coordinates[:, -1] = src_z
+        if self.model.dim == 3:
+            src_coordinates[:, 1] = src_y
+
+        rec_coordinates = np.empty((nrec, self.model.dim))
+        rec_coordinates[:, 0] = rec_x
+        rec_coordinates[:, -1] = rec_z
+        if self.model.dim == 3:
+            rec_coordinates[:, 1] = rec_y
+
+        self.geometry = AcquisitionGeometry(
+            self.model,
+            rec_coordinates,
+            src_coordinates,
+            t0,
+            tn,
+            src_type=src_type,
+            f0=None if f0 is None else f0 * 1e-3,
+        )
+
+    def updatesrc(self, wav):
+        """Update source wavelet
+
+        This routines is used to allow users to pass a custom source
+        wavelet to replace the source wavelet generated when the
+        object is initialized
+
+        Parameters
+        ----------
+        wav : :obj:`numpy.ndarray`
+            Wavelet
+
+        """
+        wav_padded = np.pad(wav, (0, self.geometry.nt - len(wav)))
+
+        self.wav = _CustomSource(
+            name="src",
+            grid=self.model.grid,
+            wav=wav_padded,
+            time_range=self.geometry.time_axis,
+        )
+
+    def create_receiver(
+        self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
+    ):
+        if self.model.dim == 2 and ry is not None:
+            raise Exception("Attempting to create 3D receiver for a 2D operator!")
+
+        tn = tn or self.geometry.tn
+        t0 = t0 or self.geometry.t0
+        dt = dt or self.model.critical_dt
+
+        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
+        rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
+        if self.model.dim == 3:
+            ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
+
+        nrec = len(rx)
+
+        rec_coordinates = np.empty((nrec, self.model.dim))
+        rec_coordinates[:, 0] = rx
+        rec_coordinates[:, -1] = rz
+        if self.model.dim == 3:
+            rec_coordinates[:, 1] = ry
+
+        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
+        return Receiver(
+            name=name,
+            grid=self.geometry.grid,
+            time_range=time_axis,
+            npoint=nrec,
+            coordinates=rec_coordinates,
+        )
+    
+    def create_source(
+        self,
+        name,
+        sx=None,
+        sy=None,
+        sz=None,
+        t0=None,
+        tn=None,
+        dt=None,
+        f0=None,
+        src_type=None,
+    ):
+
+        if self.model.dim == 2 and sy is not None:
+            raise Exception("Attempting to create 3D source for a 2D operator!")
+
+        tn = tn or self.geometry.tn
+        t0 = t0 or self.geometry.t0
+        dt = dt or self.model.critical_dt
+        f0 = f0 or self.geometry.f0
+
+        src_type = src_type or self.geometry.src_type
+
+        sx = sx or self.geometry.src_positions[:, 0]
+        sz = sz or self.geometry.src_positions[:, -1]
+        if self.model.dim == 3:
+            sy = sy or self.geometry.src_positions[:, 1]
+
+        nsrc = len(sx)
+
+        src_coordinates = np.empty((nsrc, 3))
+        src_coordinates[:, 0] = sx
+        src_coordinates[:, -1] = sz
+        if self.model.dim == 3:
+            src_coordinates[:, 1] = sy
+
+        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
+
+        return sources[src_type](
+            name=name,
+            grid=self.geometry.grid,
+            f0=f0,
+            time_range=time_axis,
+            npoint=nsrc,
+            coordinates=src_coordinates,
+            t0=t0,
+        )
+
+    def add_args(self, **kwargs):
+        self.karguments = kwargs
+
+    @staticmethod
+    def _crop_model(m: NDArray, nbl: int) -> NDArray:
+        """Remove absorbing boundaries from model"""
+        if len(m.shape) == 2:
+            return m[nbl:-nbl, nbl:-nbl]
+        else:
+            return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
+
+
+class _AcousticWave(_Wave):
     """Devito Acoustic propagator.
 
     Parameters
@@ -237,91 +416,6 @@ class _AcousticWave(LinearOperator):
             nbl=nbl,
             bcs="damp",
             dt=dt,
-        )
-
-    def _create_geometry(
-        self,
-        src_x: NDArray,
-        src_y: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_y: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: float,
-        src_type: str,
-        f0: float = 20.0,
-    ) -> None:
-        """Create geometry and time axis
-
-        Parameters
-        ----------
-        src_x : :obj:`numpy.ndarray`
-            Source x-coordinates in m
-        src_y : :obj:`numpy.ndarray`
-            Source y-coordinates in m
-        src_z : :obj:`numpy.ndarray` or :obj:`float`
-            Source z-coordinates in m
-        rec_x : :obj:`numpy.ndarray`
-            Receiver x-coordinates in m
-        rec_y : :obj:`numpy.ndarray`
-            Receiver y-coordinates in m
-        rec_z : :obj:`numpy.ndarray` or :obj:`float`
-            Receiver z-coordinates in m
-        t0 : :obj:`float`
-            Initial time
-        tn : :obj:`int`
-            Final time in ms
-        src_type : :obj:`str`
-            Source type
-        f0 : :obj:`float`, optional
-            Source peak frequency (Hz)
-
-        """
-
-        nsrc, nrec = len(src_x), len(rec_x)
-        src_coordinates = np.empty((nsrc, self.model.dim))
-        src_coordinates[:, 0] = src_x
-        src_coordinates[:, -1] = src_z
-        if self.model.dim == 3:
-            src_coordinates[:, 1] = src_y
-
-        rec_coordinates = np.empty((nrec, self.model.dim))
-        rec_coordinates[:, 0] = rec_x
-        rec_coordinates[:, -1] = rec_z
-        if self.model.dim == 3:
-            rec_coordinates[:, 1] = rec_y
-
-        self.geometry = AcquisitionGeometry(
-            self.model,
-            rec_coordinates,
-            src_coordinates,
-            t0,
-            tn,
-            src_type=src_type,
-            f0=None if f0 is None else f0 * 1e-3,
-        )
-
-    def updatesrc(self, wav):
-        """Update source wavelet
-
-        This routines is used to allow users to pass a custom source
-        wavelet to replace the source wavelet generated when the
-        object is initialized
-
-        Parameters
-        ----------
-        wav : :obj:`numpy.ndarray`
-            Wavelet
-
-        """
-        wav_padded = np.pad(wav, (0, self.geometry.nt - len(wav)))
-
-        self.wav = _CustomSource(
-            name="src",
-            grid=self.model.grid,
-            wav=wav_padded,
-            time_range=self.geometry.time_axis,
         )
 
     def _srcillumination_oneshot(self, isrc: int) -> Tuple[NDArray, NDArray]:
@@ -631,97 +725,6 @@ class _AcousticWave(LinearOperator):
             self._acoustic_matvec = self._fwd_allshots
         self._acoustic_rmatvec = self._bornadj_allshots
 
-    def create_receiver(
-        self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
-    ):
-        if self.model.dim == 2 and ry is not None:
-            raise Exception("Attempting to create 3D receiver for a 2D operator!")
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-
-        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
-        rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
-        if self.model.dim == 3:
-            ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
-
-        nrec = len(rx)
-
-        rec_coordinates = np.empty((nrec, self.model.dim))
-        rec_coordinates[:, 0] = rx
-        rec_coordinates[:, -1] = rz
-        if self.model.dim == 3:
-            rec_coordinates[:, 1] = ry
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(
-            name=name,
-            grid=self.geometry.grid,
-            time_range=time_axis,
-            npoint=nrec,
-            coordinates=rec_coordinates,
-        )
-
-    def create_source(
-        self,
-        name,
-        sx=None,
-        sy=None,
-        sz=None,
-        t0=None,
-        tn=None,
-        dt=None,
-        f0=None,
-        src_type=None,
-    ):
-
-        if self.model.dim == 2 and sy is not None:
-            raise Exception("Attempting to create 3D source for a 2D operator!")
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-        f0 = f0 or self.geometry.f0
-
-        src_type = src_type or self.geometry.src_type
-
-        sx = sx or self.geometry.src_positions[:, 0]
-        sz = sz or self.geometry.src_positions[:, -1]
-        if self.model.dim == 3:
-            sy = sy or self.geometry.src_positions[:, 1]
-
-        nsrc = len(sx)
-
-        src_coordinates = np.empty((nsrc, 3))
-        src_coordinates[:, 0] = sx
-        src_coordinates[:, -1] = sz
-        if self.model.dim == 3:
-            src_coordinates[:, 1] = sy
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-
-        return sources[src_type](
-            name=name,
-            grid=self.geometry.grid,
-            f0=f0,
-            time_range=time_axis,
-            npoint=nsrc,
-            coordinates=src_coordinates,
-            t0=t0,
-        )
-
-    def add_args(self, **kwargs):
-        self.karguments = kwargs
-
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        if len(m.shape) == 2:
-            return m[nbl:-nbl, nbl:-nbl]
-        else:
-            return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
-
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
         y = self._acoustic_matvec(x)
@@ -733,7 +736,7 @@ class _AcousticWave(LinearOperator):
         return y
 
 
-class _ElasticWave(LinearOperator):
+class _ElasticWave(_Wave):
     """Devito Elastic propagator.
 
     Parameters
@@ -904,69 +907,6 @@ class _ElasticWave(LinearOperator):
             nbl=nbl,
             bcs="damp",
             dt=dt,
-        )
-
-    def _create_geometry(
-        self,
-        src_x: NDArray,
-        src_y: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_y: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str,
-        f0: float = 20.0,
-    ) -> None:
-        """Create geometry and time axis
-
-        Parameters
-        ----------
-        src_x : :obj:`numpy.ndarray`
-            Source x-coordinates in m
-        src_y : :obj:`numpy.ndarray`
-            Source y-coordinates in m
-        src_z : :obj:`numpy.ndarray` or :obj:`float`
-            Source z-coordinates in m
-        rec_x : :obj:`numpy.ndarray`
-            Receiver x-coordinates in m
-        rec_y : :obj:`numpy.ndarray`
-            Receiver y-coordinates in m
-        rec_z : :obj:`numpy.ndarray` or :obj:`float`
-            Receiver z-coordinates in m
-        t0 : :obj:`float`
-            Initial time
-        tn : :obj:`int`
-            Number of time samples
-        src_type : :obj:`str`
-            Source type
-        f0 : :obj:`float`, optional
-            Source peak frequency (Hz)
-
-        """
-
-        nsrc, nrec = len(src_x), len(rec_x)
-        src_coordinates = np.empty((nsrc, self.model.dim))
-        src_coordinates[:, 0] = src_x
-        src_coordinates[:, -1] = src_z
-        if self.model.dim == 3:
-            src_coordinates[:, 1] = src_y
-
-        rec_coordinates = np.empty((nrec, self.model.dim))
-        rec_coordinates[:, 0] = rec_x
-        rec_coordinates[:, -1] = rec_z
-        if self.model.dim == 3:
-            rec_coordinates[:, 1] = rec_y
-
-        self.geometry = AcquisitionGeometry(
-            self.model,
-            rec_coordinates,
-            src_coordinates,
-            t0,
-            tn,
-            src_type=src_type,
-            f0=None if f0 is None else f0 / 1000,
         )
 
     def _fwd_oneshot(self, solver: IsoElasticWaveSolver, v: NDArray) -> NDArray:
@@ -1189,86 +1129,6 @@ class _ElasticWave(LinearOperator):
         else:
             raise Exception("The operator's name '%s' is not valid." % op_name)
 
-    def create_receiver(
-        self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
-    ):
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-
-        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
-        rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
-
-        if self.model.dim == 3:
-            ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
-
-        nrec = len(rx)
-
-        rec_coordinates = np.empty((nrec, self.model.dim))
-        rec_coordinates[:, 0] = rx
-        rec_coordinates[:, -1] = rz
-        if self.model.dim == 3:
-            rec_coordinates[:, 1] = ry
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(
-            name=name,
-            grid=self.geometry.grid,
-            time_range=time_axis,
-            npoint=nrec,
-            coordinates=rec_coordinates,
-        )
-
-    def create_source(
-        self,
-        name,
-        sx=None,
-        sy=None,
-        sz=None,
-        t0=None,
-        tn=None,
-        dt=None,
-        f0=None,
-        src_type=None,
-    ):
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-        f0 = f0 or self.geometry.f0
-
-        src_type = src_type or self.geometry.src_type
-
-        sx = sx or self.geometry.src_positions[:, 0]
-        sz = sz or self.geometry.src_positions[:, -1]
-        if self.model.dim == 3:
-            sy = sy or self.geometry.src_positions[:, 1]
-
-        nsrc = len(sx)
-
-        src_coordinates = np.empty((nsrc, self.model.dim))
-        src_coordinates[:, 0] = sx
-        src_coordinates[:, -1] = sz
-        if self.model.dim == 2:
-            src_coordinates[:, 1] = sy
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-
-        return sources[src_type](
-            name=name,
-            grid=self.geometry.grid,
-            f0=f0,
-            time_range=time_axis,
-            npoint=nsrc,
-            coordinates=src_coordinates,
-            t0=t0,
-        )
-
-    def add_args(self, **kwargs):
-        # TODO: decide if this values will be manteined at the object or it will be resete after matvec's execution.
-        self.karguments = deepcopy(kwargs)
-
     def __mul__(self, x: Union[float, LinearOperator]) -> LinearOperator:
         # data must be a np.array
         if not isinstance(x, np.ndarray):
@@ -1293,14 +1153,6 @@ class _ElasticWave(LinearOperator):
         self._register_multiplications(save_op_name)
         return y
 
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        if len(m.shape) == 2:
-            return m[nbl:-nbl, nbl:-nbl]
-        else:
-            return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
-
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
         y = self._acoustic_matvec(x)
@@ -1312,7 +1164,7 @@ class _ElasticWave(LinearOperator):
         return y
 
 
-class _ViscoAcousticWave(LinearOperator):
+class _ViscoAcousticWave(_Wave):
     """Devito ViscoAcoustic propagator.
 
     Parameters
@@ -1488,69 +1340,6 @@ class _ViscoAcousticWave(LinearOperator):
             dt=dt,
         )
 
-    def _create_geometry(
-        self,
-        src_x: NDArray,
-        src_y: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_y: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str,
-        f0: float = 20.0,
-    ) -> None:
-        """Create geometry and time axis
-
-        Parameters
-        ----------
-        src_x : :obj:`numpy.ndarray`
-            Source x-coordinates in m
-        src_y : :obj:`numpy.ndarray`
-            Source y-coordinates in m
-        src_z : :obj:`numpy.ndarray` or :obj:`float`
-            Source z-coordinates in m
-        rec_x : :obj:`numpy.ndarray`
-            Receiver x-coordinates in m
-        rec_y : :obj:`numpy.ndarray`
-            Receiver y-coordinates in m
-        rec_z : :obj:`numpy.ndarray` or :obj:`float`
-            Receiver z-coordinates in m
-        t0 : :obj:`float`
-            Initial time
-        tn : :obj:`int`
-            Number of time samples
-        src_type : :obj:`str`
-            Source type
-        f0 : :obj:`float`, optional
-            Source peak frequency (Hz)
-
-        """
-
-        nsrc, nrec = len(src_x), len(rec_x)
-        src_coordinates = np.empty((nsrc, self.model.dim))
-        src_coordinates[:, 0] = src_x
-        src_coordinates[:, -1] = src_z
-        if self.model.dim == 3:
-            src_coordinates[:, 1] = src_y
-
-        rec_coordinates = np.empty((nrec, self.model.dim))
-        rec_coordinates[:, 0] = rec_x
-        rec_coordinates[:, -1] = rec_z
-        if self.model.dim == 3:
-            rec_coordinates[:, 1] = rec_y
-
-        self.geometry = AcquisitionGeometry(
-            self.model,
-            rec_coordinates,
-            src_coordinates,
-            t0,
-            tn,
-            src_type=src_type,
-            f0=None if f0 is None else f0 * 1e-3,
-        )
-
     def _fwd_oneshot(self, solver: AcousticWaveSolver, v: NDArray) -> NDArray:
         """Forward modelling for one shot
 
@@ -1621,98 +1410,6 @@ class _ViscoAcousticWave(LinearOperator):
         if op_name == "fwd":
             self._acoustic_matvec = self._fwd_allshots
             self._acoustic_rmatvec = self._adj_allshots
-
-    def create_receiver(
-        self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
-    ):
-
-        if self.model.dim == 2 and ry is not None:
-            raise Exception("Attempting to create 3D receiver for a 2D operator!")
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-
-        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
-        rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
-        if self.model.dim == 3:
-            ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
-
-        nrec = len(rx)
-
-        rec_coordinates = np.empty((nrec, 3))
-        rec_coordinates[:, 0] = rx
-        rec_coordinates[:, -1] = rz
-        if self.model.dim == 3:
-            rec_coordinates[:, 1] = ry
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(
-            name=name,
-            grid=self.geometry.grid,
-            time_range=time_axis,
-            npoint=nrec,
-            coordinates=rec_coordinates,
-        )
-
-    def create_source(
-        self,
-        name,
-        sx=None,
-        sy=None,
-        sz=None,
-        t0=None,
-        tn=None,
-        dt=None,
-        f0=None,
-        src_type=None,
-    ):
-
-        if self.model.dim == 2 and sy is not None:
-            raise Exception("Attempting to create 3D source for a 2D operator!")
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-        f0 = f0 or self.geometry.f0
-
-        src_type = src_type or self.geometry.src_type
-
-        sx = sx or self.geometry.src_positions[:, 0]
-        sz = sz or self.geometry.src_positions[:, -1]
-        if self.model.dim == 3:
-            sy = sy or self.geometry.src_positions[:, 1]
-
-        nsrc = len(sx)
-
-        src_coordinates = np.empty((nsrc, 3))
-        src_coordinates[:, 0] = sx
-        src_coordinates[:, -1] = sz
-        if self.model.dim == 3:
-            src_coordinates[:, 1] = sy
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-
-        return sources[src_type](
-            name=name,
-            grid=self.geometry.grid,
-            f0=f0,
-            time_range=time_axis,
-            npoint=nsrc,
-            coordinates=src_coordinates,
-            t0=t0,
-        )
-
-    def add_args(self, **kwargs):
-        self.karguments = kwargs
-
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        if len(m.shape) == 2:
-            return m[nbl:-nbl, nbl:-nbl]
-        else:
-            return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
 
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
