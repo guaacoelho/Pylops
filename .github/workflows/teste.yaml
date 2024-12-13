@@ -1,4 +1,4 @@
-name: PyLops
+name: Teste
 
 on: [push, pull_request]
 
