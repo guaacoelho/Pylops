@@ -74,7 +74,7 @@ class _CustomSource(PointSource):
 
 
 class _Wave(LinearOperator):
-    
+
     def _create_geometry(
         self,
         src_x: NDArray,
@@ -191,7 +191,7 @@ class _Wave(LinearOperator):
             npoint=nrec,
             coordinates=rec_coordinates,
         )
-    
+
     def create_source(
         self,
         name,
@@ -349,7 +349,6 @@ class _AcousticWave(_Wave):
 
         if is_3d and (rec_y is None or src_y is None):
             raise Exception("Attempting to create a 2D operator using a 3D intended class!")
-
 
         # create model
         self._create_model(shape, origin, spacing, vp, space_order, nbl, dt)
