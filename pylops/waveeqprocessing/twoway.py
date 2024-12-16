@@ -73,146 +73,7 @@ class _CustomSource(PointSource):
         return self.wav
 
 
-class _AcousticWave(LinearOperator):
-    """Devito Acoustic propagator.
-
-    Parameters
-    ----------
-    shape : :obj:`tuple` or :obj:`numpy.ndarray`
-        Model shape ``(nx, nz)``
-    origin : :obj:`tuple` or :obj:`numpy.ndarray`
-        Model origin ``(ox, oz)``
-    spacing : :obj:`tuple` or  :obj:`numpy.ndarray`
-        Model spacing ``(dx, dz)``
-    vp : :obj:`numpy.ndarray`
-        Velocity model in m/s
-    src_x : :obj:`numpy.ndarray`
-        Source x-coordinates in m
-    src_y : :obj:`numpy.ndarray`
-        Source y-coordinates in m
-    src_z : :obj:`numpy.ndarray` or :obj:`float`
-        Source z-coordinates in m
-    rec_x : :obj:`numpy.ndarray`
-        Receiver x-coordinates in m
-    rec_y : :obj:`numpy.ndarray`
-        Receiver y-coordinates in m
-    rec_z : :obj:`numpy.ndarray` or :obj:`float`
-        Receiver z-coordinates in m
-    t0 : :obj:`float`
-        Initial time in ms
-    tn : :obj:`int`
-        Final time in ms
-    src_type : :obj:`str`
-        Source type
-    space_order : :obj:`int`, optional
-        Spatial ordering of FD stencil
-    nbl : :obj:`int`, optional
-        Number ordering of samples in absorbing boundaries
-    f0 : :obj:`float`, optional
-        Source peak frequency (Hz)
-    checkpointing : :obj:`bool`, optional
-        Use checkpointing (``True``) or not (``False``). Note that
-        using checkpointing is needed when dealing with large models
-        but it will slow down computations
-    dtype : :obj:`str`, optional
-        Type of elements in input array.
-    name : :obj:`str`, optional
-        Name of operator (to be used by :func:`pylops.utils.describe.describe`)
-
-    Attributes
-    ----------
-    shape : :obj:`tuple`
-        Operator shape
-    explicit : :obj:`bool`
-        Operator contains a matrix that can be solved explicitly (``True``) or
-        not (``False``)
-
-    """
-
-    def __init__(
-        self,
-        shape: InputDimsLike,
-        origin: SamplingLike,
-        spacing: SamplingLike,
-        vp: NDArray,
-        src_x: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: float,
-        src_type: str = "Ricker",
-        space_order: int = 6,
-        nbl: int = 20,
-        f0: float = 20.0,
-        checkpointing: bool = False,
-        dtype: DTypeLike = "float32",
-        name: str = "A",
-        op_name: str = "born",
-        src_y: NDArray = None,
-        rec_y: NDArray = None,
-        dt: int = None,
-    ) -> None:
-        if devito_message is not None:
-            raise NotImplementedError(devito_message)
-
-        # create model
-        self._create_model(shape, origin, spacing, vp, space_order, nbl, dt)
-        self._create_geometry(
-            src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0
-        )
-        self.checkpointing = checkpointing
-        self.karguments = {}
-
-        super().__init__(
-            dtype=np.dtype(dtype),
-            dims=vp.shape,
-            dimsd=(len(src_x), len(rec_x), self.geometry.nt),
-            explicit=False,
-            name=name,
-        )
-        self._register_multiplications(op_name)
-
-    def _create_model(
-        self,
-        shape: InputDimsLike,
-        origin: SamplingLike,
-        spacing: SamplingLike,
-        vp: NDArray,
-        space_order: int = 6,
-        nbl: int = 20,
-        dt: int = None,
-    ) -> None:
-        """Create model
-
-        Parameters
-        ----------
-        shape : :obj:`numpy.ndarray`
-            Model shape ``(nx, nz)``
-        origin : :obj:`numpy.ndarray`
-            Model origin ``(ox, oz)``
-        spacing : :obj:`numpy.ndarray`
-            Model spacing ``(dx, dz)``
-        vp : :obj:`numpy.ndarray`
-            Velocity model in m/s
-        space_order : :obj:`int`, optional
-            Spatial ordering of FD stencil
-        nbl : :obj:`int`, optional
-            Number ordering of samples in absorbing boundaries
-
-        """
-        self.space_order = space_order
-        self.model = Model(
-            space_order=space_order,
-            vp=vp * 1e-3,
-            origin=origin,
-            shape=shape,
-            dtype=np.float32,
-            spacing=spacing,
-            nbl=nbl,
-            bcs="damp",
-            dt=dt,
-        )
+class _Wave(LinearOperator):
 
     def _create_geometry(
         self,
@@ -297,6 +158,263 @@ class _AcousticWave(LinearOperator):
             grid=self.model.grid,
             wav=wav_padded,
             time_range=self.geometry.time_axis,
+        )
+
+    def create_receiver(
+        self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
+    ):
+        if self.model.dim == 2 and ry is not None:
+            raise Exception("Attempting to create 3D receiver for a 2D operator!")
+
+        tn = tn or self.geometry.tn
+        t0 = t0 or self.geometry.t0
+        dt = dt or self.model.critical_dt
+
+        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
+        rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
+        if self.model.dim == 3:
+            ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
+
+        nrec = len(rx)
+
+        rec_coordinates = np.empty((nrec, self.model.dim))
+        rec_coordinates[:, 0] = rx
+        rec_coordinates[:, -1] = rz
+        if self.model.dim == 3:
+            rec_coordinates[:, 1] = ry
+
+        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
+        return Receiver(
+            name=name,
+            grid=self.geometry.grid,
+            time_range=time_axis,
+            npoint=nrec,
+            coordinates=rec_coordinates,
+        )
+
+    def create_source(
+        self,
+        name,
+        sx=None,
+        sy=None,
+        sz=None,
+        t0=None,
+        tn=None,
+        dt=None,
+        f0=None,
+        src_type=None,
+    ):
+
+        if self.model.dim == 2 and sy is not None:
+            raise Exception("Attempting to create 3D source for a 2D operator!")
+
+        tn = tn or self.geometry.tn
+        t0 = t0 or self.geometry.t0
+        dt = dt or self.model.critical_dt
+        f0 = f0 or self.geometry.f0
+
+        src_type = src_type or self.geometry.src_type
+
+        sx = sx or self.geometry.src_positions[:, 0]
+        sz = sz or self.geometry.src_positions[:, -1]
+        if self.model.dim == 3:
+            sy = sy or self.geometry.src_positions[:, 1]
+
+        nsrc = len(sx)
+
+        src_coordinates = np.empty((nsrc, 3))
+        src_coordinates[:, 0] = sx
+        src_coordinates[:, -1] = sz
+        if self.model.dim == 3:
+            src_coordinates[:, 1] = sy
+
+        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
+
+        return sources[src_type](
+            name=name,
+            grid=self.geometry.grid,
+            f0=f0,
+            time_range=time_axis,
+            npoint=nsrc,
+            coordinates=src_coordinates,
+            t0=t0,
+        )
+
+    def add_args(self, **kwargs):
+        self.karguments = kwargs
+
+    @staticmethod
+    def _crop_model(m: NDArray, nbl: int) -> NDArray:
+        """Remove absorbing boundaries from model"""
+        if len(m.shape) == 2:
+            return m[nbl:-nbl, nbl:-nbl]
+        else:
+            return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
+
+
+class _AcousticWave(_Wave):
+    """Devito Acoustic propagator.
+
+    Parameters
+    ----------
+    shape : :obj:`tuple` or :obj:`numpy.ndarray`
+        Model shape ``(nx, nz)``
+    origin : :obj:`tuple` or :obj:`numpy.ndarray`
+        Model origin ``(ox, oz)``
+    spacing : :obj:`tuple` or  :obj:`numpy.ndarray`
+        Model spacing ``(dx, dz)``
+    vp : :obj:`numpy.ndarray`
+        Velocity model in m/s
+    src_x : :obj:`numpy.ndarray`
+        Source x-coordinates in m
+    src_y : :obj:`numpy.ndarray`
+        Source y-coordinates in m
+    src_z : :obj:`numpy.ndarray` or :obj:`float`
+        Source z-coordinates in m
+    rec_x : :obj:`numpy.ndarray`
+        Receiver x-coordinates in m
+    rec_y : :obj:`numpy.ndarray`
+        Receiver y-coordinates in m
+    rec_z : :obj:`numpy.ndarray` or :obj:`float`
+        Receiver z-coordinates in m
+    t0 : :obj:`float`
+        Initial time in ms
+    tn : :obj:`int`
+        Final time in ms
+    src_type : :obj:`str`
+        Source type
+    space_order : :obj:`int`, optional
+        Spatial ordering of FD stencil
+    nbl : :obj:`int`, optional
+        Number ordering of samples in absorbing boundaries
+    f0 : :obj:`float`, optional
+        Source peak frequency (Hz)
+    checkpointing : :obj:`bool`, optional
+        Use checkpointing (``True``) or not (``False``). Note that
+        using checkpointing is needed when dealing with large models
+        but it will slow down computations
+    dtype : :obj:`str`, optional
+        Type of elements in input array.
+    name : :obj:`str`, optional
+        Name of operator (to be used by :func:`pylops.utils.describe.describe`)
+
+    Attributes
+    ----------
+    shape : :obj:`tuple`
+        Operator shape
+    explicit : :obj:`bool`
+        Operator contains a matrix that can be solved explicitly (``True``) or
+        not (``False``)
+
+    """
+
+    def __init__(
+        self,
+        shape: InputDimsLike,
+        origin: SamplingLike,
+        spacing: SamplingLike,
+        vp: NDArray,
+        src_x: NDArray,
+        src_z: NDArray,
+        rec_x: NDArray,
+        rec_z: NDArray,
+        t0: float,
+        tn: float,
+        src_type: str = "Ricker",
+        space_order: int = 6,
+        nbl: int = 20,
+        f0: float = 20.0,
+        checkpointing: bool = False,
+        dtype: DTypeLike = "float32",
+        name: str = "A",
+        op_name: str = "born",
+        src_y: NDArray = None,
+        rec_y: NDArray = None,
+        dt: int = None,
+        dswap: bool = False,
+        dswap_disks: int = 1,
+        dswap_folder: str = None,
+        dswap_folder_path: str = None,
+        dswap_compression: str = None,
+        dswap_compression_value: float | int = None,
+    ) -> None:
+        if devito_message is not None:
+            raise NotImplementedError(devito_message)
+
+        is_2d = len(shape) == 2
+        is_3d = len(shape) == 3
+
+        if is_2d and (rec_y is not None or src_y is not None):
+            raise Exception("Attempting to create a 3D operator using a 2D intended class!")
+
+        if is_3d and (rec_y is None or src_y is None):
+            raise Exception("Attempting to create a 2D operator using a 3D intended class!")
+
+        # create model
+        self._create_model(shape, origin, spacing, vp, space_order, nbl, dt)
+        self._create_geometry(
+            src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0
+        )
+        self.checkpointing = checkpointing
+        self.karguments = {}
+
+        self._dswap_opt = {
+            "dswap": dswap,
+            "dswap_disks": dswap_disks,
+            "dswap_folder": dswap_folder,
+            "dswap_folder_path": dswap_folder_path,
+            "dswap_compression": dswap_compression,
+            "dswap_compression_value": dswap_compression_value,
+        }
+
+        super().__init__(
+            dtype=np.dtype(dtype),
+            dims=vp.shape,
+            dimsd=(len(src_x), len(rec_x), self.geometry.nt),
+            explicit=False,
+            name=name,
+        )
+        self._register_multiplications(op_name)
+
+    def _create_model(
+        self,
+        shape: InputDimsLike,
+        origin: SamplingLike,
+        spacing: SamplingLike,
+        vp: NDArray,
+        space_order: int = 6,
+        nbl: int = 20,
+        dt: int = None,
+    ) -> None:
+        """Create model
+
+        Parameters
+        ----------
+        shape : :obj:`numpy.ndarray`
+            Model shape ``(nx, nz)``
+        origin : :obj:`numpy.ndarray`
+            Model origin ``(ox, oz)``
+        spacing : :obj:`numpy.ndarray`
+            Model spacing ``(dx, dz)``
+        vp : :obj:`numpy.ndarray`
+            Velocity model in m/s
+        space_order : :obj:`int`, optional
+            Spatial ordering of FD stencil
+        nbl : :obj:`int`, optional
+            Number ordering of samples in absorbing boundaries
+
+        """
+        self.space_order = space_order
+        self.model = Model(
+            space_order=space_order,
+            vp=vp * 1e-3,
+            origin=origin,
+            shape=shape,
+            dtype=np.float32,
+            spacing=spacing,
+            nbl=nbl,
+            bcs="damp",
+            dt=dt,
         )
 
     def _srcillumination_oneshot(self, isrc: int) -> Tuple[NDArray, NDArray]:
@@ -606,89 +724,6 @@ class _AcousticWave(LinearOperator):
             self._acoustic_matvec = self._fwd_allshots
         self._acoustic_rmatvec = self._bornadj_allshots
 
-    def create_receiver(
-        self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
-    ):
-        if self.model.dim == 2 and ry is not None:
-            raise Exception("Attempting to create 3D receiver for a 2D operator!")
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-
-        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
-        rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
-        if self.model.dim == 3:
-            ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
-
-        nrec = len(rx)
-
-        rec_coordinates = np.empty((nrec, self.model.dim))
-        rec_coordinates[:, 0] = rx
-        rec_coordinates[:, -1] = rz
-        if self.model.dim == 3:
-            rec_coordinates[:, 1] = ry
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(
-            name=name,
-            grid=self.geometry.grid,
-            time_range=time_axis,
-            npoint=nrec,
-            coordinates=rec_coordinates,
-        )
-
-    def create_source(
-        self,
-        name,
-        sx=None,
-        sy=None,
-        sz=None,
-        t0=None,
-        tn=None,
-        dt=None,
-        f0=None,
-        src_type=None,
-    ):
-
-        if self.model.dim == 2 and sy is not None:
-            raise Exception("Attempting to create 3D source for a 2D operator!")
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-        f0 = f0 or self.geometry.f0
-
-        src_type = src_type or self.geometry.src_type
-
-        sx = sx or self.geometry.src_positions[:, 0]
-        sz = sz or self.geometry.src_positions[:, -1]
-        if self.model.dim == 3:
-            sy = sy or self.geometry.src_positions[:, 1]
-
-        nsrc = len(sx)
-
-        src_coordinates = np.empty((nsrc, 3))
-        src_coordinates[:, 0] = sx
-        src_coordinates[:, -1] = sz
-        if self.model.dim == 3:
-            src_coordinates[:, 1] = sy
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-
-        return sources[src_type](
-            name=name,
-            grid=self.geometry.grid,
-            f0=f0,
-            time_range=time_axis,
-            npoint=nsrc,
-            coordinates=src_coordinates,
-            t0=t0,
-        )
-
-    def add_args(self, **kwargs):
-        self.karguments = kwargs
-
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
         y = self._acoustic_matvec(x)
@@ -700,157 +735,7 @@ class _AcousticWave(LinearOperator):
         return y
 
 
-class AcousticWave2D(_AcousticWave):
-    def __init__(
-        self,
-        shape: InputDimsLike,
-        origin: SamplingLike,
-        spacing: SamplingLike,
-        vp: NDArray,
-        src_x: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str = "Ricker",
-        space_order: int = 6,
-        nbl: int = 20,
-        f0: float = 20.0,
-        checkpointing: bool = False,
-        dtype: DTypeLike = "float32",
-        name: str = "A",
-        op_name: str = "born",
-        dt: int = None,
-        dswap: bool = False,
-        dswap_disks: int = 1,
-        dswap_folder: str = None,
-        dswap_folder_path: str = None,
-        dswap_compression: str = None,
-        dswap_compression_value: float | int = None,
-    ) -> None:
-
-        if len(shape) != 2:
-            raise Exception(
-                "Attempting to create a 3D operator using a 2D intended class!"
-            )
-
-        # Create disk swap dict
-        self._dswap_opt = {
-            "dswap": dswap,
-            "dswap_disks": dswap_disks,
-            "dswap_folder": dswap_folder,
-            "dswap_folder_path": dswap_folder_path,
-            "dswap_compression": dswap_compression,
-            "dswap_compression_value": dswap_compression_value,
-        }
-
-        super().__init__(
-            shape=shape,
-            origin=origin,
-            spacing=spacing,
-            vp=vp,
-            src_x=src_x,
-            src_z=src_z,
-            rec_x=rec_x,
-            rec_z=rec_z,
-            t0=t0,
-            tn=tn,
-            src_type=src_type,
-            space_order=space_order,
-            nbl=nbl,
-            f0=f0,
-            checkpointing=checkpointing,
-            dtype=dtype,
-            name=name,
-            op_name=op_name,
-            dt=dt,
-        )
-
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        return m[nbl:-nbl, nbl:-nbl]
-
-
-class AcousticWave3D(_AcousticWave):
-    def __init__(
-        self,
-        shape: InputDimsLike,
-        origin: SamplingLike,
-        spacing: SamplingLike,
-        vp: NDArray,
-        src_x: NDArray,
-        src_y: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_y: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str = "Ricker",
-        space_order: int = 6,
-        nbl: int = 20,
-        f0: float = 20.0,
-        checkpointing: bool = False,
-        dtype: DTypeLike = "float32",
-        name: str = "A",
-        op_name: str = "born",
-        dt: int = None,
-        dswap: bool = False,
-        dswap_disks: int = 1,
-        dswap_folder: str = None,
-        dswap_folder_path: str = None,
-        dswap_compression: str = None,
-        dswap_compression_value: float | int = None,
-    ) -> None:
-
-        if len(shape) != 3:
-            raise Exception(
-                "Attempting to create a 3D operator with a 2D intended class!"
-            )
-
-        # Create disk swap dict
-        self._dswap_opt = {
-            "dswap": dswap,
-            "dswap_disks": dswap_disks,
-            "dswap_folder": dswap_folder,
-            "dswap_folder_path": dswap_folder_path,
-            "dswap_compression": dswap_compression,
-            "dswap_compression_value": dswap_compression_value,
-        }
-
-        super().__init__(
-            shape=shape,
-            origin=origin,
-            spacing=spacing,
-            vp=vp,
-            src_x=src_x,
-            src_y=src_y,
-            src_z=src_z,
-            rec_x=rec_x,
-            rec_y=rec_y,
-            rec_z=rec_z,
-            t0=t0,
-            tn=tn,
-            src_type=src_type,
-            space_order=space_order,
-            nbl=nbl,
-            f0=f0,
-            checkpointing=checkpointing,
-            dtype=dtype,
-            name=name,
-            op_name=op_name,
-            dt=dt,
-        )
-
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
-
-
-class _ElasticWave(LinearOperator):
+class _ElasticWave(_Wave):
     """Devito Elastic propagator.
 
     Parameters
@@ -942,6 +827,15 @@ class _ElasticWave(LinearOperator):
         if devito_message is not None:
             raise NotImplementedError(devito_message)
 
+        is_2d = len(shape) == 2
+        is_3d = len(shape) == 3
+
+        if is_2d and (rec_y is not None or src_y is not None):
+            raise Exception("Attempting to create a 3D operator using a 2D intended class!")
+
+        if is_3d and (rec_y is None or src_y is None):
+            raise Exception("Attempting to create a 2D operator using a 3D intended class!")
+
         # create model
         self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl, dt)
         self._create_geometry(
@@ -1012,69 +906,6 @@ class _ElasticWave(LinearOperator):
             nbl=nbl,
             bcs="damp",
             dt=dt,
-        )
-
-    def _create_geometry(
-        self,
-        src_x: NDArray,
-        src_y: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_y: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str,
-        f0: float = 20.0,
-    ) -> None:
-        """Create geometry and time axis
-
-        Parameters
-        ----------
-        src_x : :obj:`numpy.ndarray`
-            Source x-coordinates in m
-        src_y : :obj:`numpy.ndarray`
-            Source y-coordinates in m
-        src_z : :obj:`numpy.ndarray` or :obj:`float`
-            Source z-coordinates in m
-        rec_x : :obj:`numpy.ndarray`
-            Receiver x-coordinates in m
-        rec_y : :obj:`numpy.ndarray`
-            Receiver y-coordinates in m
-        rec_z : :obj:`numpy.ndarray` or :obj:`float`
-            Receiver z-coordinates in m
-        t0 : :obj:`float`
-            Initial time
-        tn : :obj:`int`
-            Number of time samples
-        src_type : :obj:`str`
-            Source type
-        f0 : :obj:`float`, optional
-            Source peak frequency (Hz)
-
-        """
-
-        nsrc, nrec = len(src_x), len(rec_x)
-        src_coordinates = np.empty((nsrc, self.model.dim))
-        src_coordinates[:, 0] = src_x
-        src_coordinates[:, -1] = src_z
-        if self.model.dim == 3:
-            src_coordinates[:, 1] = src_y
-
-        rec_coordinates = np.empty((nrec, self.model.dim))
-        rec_coordinates[:, 0] = rec_x
-        rec_coordinates[:, -1] = rec_z
-        if self.model.dim == 3:
-            rec_coordinates[:, 1] = rec_y
-
-        self.geometry = AcquisitionGeometry(
-            self.model,
-            rec_coordinates,
-            src_coordinates,
-            t0,
-            tn,
-            src_type=src_type,
-            f0=None if f0 is None else f0 / 1000,
         )
 
     def _fwd_oneshot(self, solver: IsoElasticWaveSolver, v: NDArray) -> NDArray:
@@ -1297,86 +1128,6 @@ class _ElasticWave(LinearOperator):
         else:
             raise Exception("The operator's name '%s' is not valid." % op_name)
 
-    def create_receiver(
-        self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
-    ):
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-
-        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
-        rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
-
-        if self.model.dim == 3:
-            ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
-
-        nrec = len(rx)
-
-        rec_coordinates = np.empty((nrec, self.model.dim))
-        rec_coordinates[:, 0] = rx
-        rec_coordinates[:, -1] = rz
-        if self.model.dim == 3:
-            rec_coordinates[:, 1] = ry
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(
-            name=name,
-            grid=self.geometry.grid,
-            time_range=time_axis,
-            npoint=nrec,
-            coordinates=rec_coordinates,
-        )
-
-    def create_source(
-        self,
-        name,
-        sx=None,
-        sy=None,
-        sz=None,
-        t0=None,
-        tn=None,
-        dt=None,
-        f0=None,
-        src_type=None,
-    ):
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-        f0 = f0 or self.geometry.f0
-
-        src_type = src_type or self.geometry.src_type
-
-        sx = sx or self.geometry.src_positions[:, 0]
-        sz = sz or self.geometry.src_positions[:, -1]
-        if self.model.dim == 3:
-            sy = sy or self.geometry.src_positions[:, 1]
-
-        nsrc = len(sx)
-
-        src_coordinates = np.empty((nsrc, self.model.dim))
-        src_coordinates[:, 0] = sx
-        src_coordinates[:, -1] = sz
-        if self.model.dim == 2:
-            src_coordinates[:, 1] = sy
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-
-        return sources[src_type](
-            name=name,
-            grid=self.geometry.grid,
-            f0=f0,
-            time_range=time_axis,
-            npoint=nsrc,
-            coordinates=src_coordinates,
-            t0=t0,
-        )
-
-    def add_args(self, **kwargs):
-        # TODO: decide if this values will be manteined at the object or it will be resete after matvec's execution.
-        self.karguments = deepcopy(kwargs)
-
     def __mul__(self, x: Union[float, LinearOperator]) -> LinearOperator:
         # data must be a np.array
         if not isinstance(x, np.ndarray):
@@ -1412,247 +1163,7 @@ class _ElasticWave(LinearOperator):
         return y
 
 
-class ElasticWave2D(_ElasticWave):
-    """Devito Elastic propagator.
-
-    Parameters
-    ----------
-    shape : :obj:`tuple` or :obj:`numpy.ndarray`
-        Model shape ``(nx, nz)``
-    origin : :obj:`tuple` or :obj:`numpy.ndarray`
-        Model origin ``(ox, oz)``
-    spacing : :obj:`tuple` or  :obj:`numpy.ndarray`
-        Model spacing ``(dx, dz)``
-    vp : :obj:`numpy.ndarray`
-        Velocity model in m/s
-    src_x : :obj:`numpy.ndarray`
-        Source x-coordinates in m
-    src_z : :obj:`numpy.ndarray` or :obj:`float`
-        Source z-coordinates in m
-    rec_x : :obj:`numpy.ndarray`
-        Receiver x-coordinates in m
-    rec_z : :obj:`numpy.ndarray` or :obj:`float`
-        Receiver z-coordinates in m
-    t0 : :obj:`float`
-        Initial time
-    tn : :obj:`int`
-        Number of time samples
-    src_type : :obj:`str`
-        Source type
-    space_order : :obj:`int`, optional
-        Spatial ordering of FD stencil
-    nbl : :obj:`int`, optional
-        Number ordering of samples in absorbing boundaries
-    f0 : :obj:`float`, optional
-        Source peak frequency (Hz)
-    checkpointing : :obj:`bool`, optional
-        Use checkpointing (``True``) or not (``False``). Note that
-        using checkpointing is needed when dealing with large models
-        but it will slow down computations
-    dtype : :obj:`str`, optional
-        Type of elements in input array.
-    name : :obj:`str`, optional
-        Name of operator (to be used by :func:`pylops.utils.describe.describe`)
-
-    Attributes
-    ----------
-    shape : :obj:`tuple`
-        Operator shape
-    explicit : :obj:`bool`
-        Operator contains a matrix that can be solved explicitly (``True``) or
-        not (``False``)
-
-    """
-
-    def __init__(
-        self,
-        shape: InputDimsLike,
-        origin: SamplingLike,
-        spacing: SamplingLike,
-        vp: NDArray,
-        vs: NDArray,
-        rho: NDArray,
-        src_x: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str = "Ricker",
-        space_order: int = 6,
-        nbl: int = 20,
-        f0: float = 20.0,
-        checkpointing: bool = False,
-        dtype: DTypeLike = "float32",
-        name: str = "A",
-        par: str = "lam-mu",
-        op_name: str = "fwd",
-        dt: int = None,
-    ) -> None:
-        if devito_message is not None:
-            raise NotImplementedError(devito_message)
-
-        if len(shape) != 2:
-            raise Exception(
-                "Attempting to create a 3D operator using a 2D intended class!"
-            )
-
-        super().__init__(
-            shape=shape,
-            origin=origin,
-            spacing=spacing,
-            vp=vp,
-            vs=vs,
-            rho=rho,
-            src_x=src_x,
-            src_z=src_z,
-            rec_x=rec_x,
-            rec_z=rec_z,
-            t0=t0,
-            tn=tn,
-            src_type=src_type,
-            space_order=space_order,
-            nbl=nbl,
-            f0=f0,
-            checkpointing=checkpointing,
-            dtype=dtype,
-            name=name,
-            par=par,
-            op_name=op_name,
-            dt=dt,
-        )
-
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        return m[nbl:-nbl, nbl:-nbl]
-
-
-class ElasticWave3D(_ElasticWave):
-    """Devito Elastic propagator.
-
-    Parameters
-    ----------
-    shape : :obj:`tuple` or :obj:`numpy.ndarray`
-        Model shape ``(nx, nz)``
-    origin : :obj:`tuple` or :obj:`numpy.ndarray`
-        Model origin ``(ox, oz)``
-    spacing : :obj:`tuple` or  :obj:`numpy.ndarray`
-        Model spacing ``(dx, dz)``
-    vp : :obj:`numpy.ndarray`
-        Velocity model in m/s
-    src_x : :obj:`numpy.ndarray`
-        Source x-coordinates in m
-    src_y : :obj:`numpy.ndarray`
-        Source y-coordinates in m
-    src_z : :obj:`numpy.ndarray` or :obj:`float`
-        Source z-coordinates in m
-    rec_x : :obj:`numpy.ndarray`
-        Receiver x-coordinates in m
-    rec_y : :obj:`numpy.ndarray`
-        Receiver y-coordinates in m
-    rec_z : :obj:`numpy.ndarray` or :obj:`float`
-        Receiver z-coordinates in m
-    t0 : :obj:`float`
-        Initial time
-    tn : :obj:`int`
-        Number of time samples
-    src_type : :obj:`str`
-        Source type
-    space_order : :obj:`int`, optional
-        Spatial ordering of FD stencil
-    nbl : :obj:`int`, optional
-        Number ordering of samples in absorbing boundaries
-    f0 : :obj:`float`, optional
-        Source peak frequency (Hz)
-    checkpointing : :obj:`bool`, optional
-        Use checkpointing (``True``) or not (``False``). Note that
-        using checkpointing is needed when dealing with large models
-        but it will slow down computations
-    dtype : :obj:`str`, optional
-        Type of elements in input array.
-    name : :obj:`str`, optional
-        Name of operator (to be used by :func:`pylops.utils.describe.describe`)
-
-    Attributes
-    ----------
-    shape : :obj:`tuple`
-        Operator shape
-    explicit : :obj:`bool`
-        Operator contains a matrix that can be solved explicitly (``True``) or
-        not (``False``)
-
-    """
-
-    def __init__(
-        self,
-        shape: InputDimsLike,
-        origin: SamplingLike,
-        spacing: SamplingLike,
-        vp: NDArray,
-        vs: NDArray,
-        rho: NDArray,
-        src_x: NDArray,
-        src_y: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_y: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str = "Ricker",
-        space_order: int = 6,
-        nbl: int = 20,
-        f0: float = 20.0,
-        checkpointing: bool = False,
-        dtype: DTypeLike = "float32",
-        name: str = "A",
-        par: str = "lam-mu",
-        op_name: str = "fwd",
-        dt: int = None,
-    ) -> None:
-        if devito_message is not None:
-            raise NotImplementedError(devito_message)
-
-        if len(shape) != 3:
-            raise Exception(
-                "Attempting to create a 2D operator with a 3D intended class!"
-            )
-
-        super().__init__(
-            shape=shape,
-            origin=origin,
-            spacing=spacing,
-            vp=vp,
-            vs=vs,
-            rho=rho,
-            src_x=src_x,
-            src_y=src_y,
-            src_z=src_z,
-            rec_x=rec_x,
-            rec_y=rec_y,
-            rec_z=rec_z,
-            t0=t0,
-            tn=tn,
-            src_type=src_type,
-            space_order=space_order,
-            nbl=nbl,
-            f0=f0,
-            checkpointing=checkpointing,
-            dtype=dtype,
-            name=name,
-            par=par,
-            op_name=op_name,
-            dt=dt,
-        )
-
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
-
-
-class _ViscoAcousticWave(LinearOperator):
+class _ViscoAcousticWave(_Wave):
     """Devito ViscoAcoustic propagator.
 
     Parameters
@@ -1748,15 +1259,18 @@ class _ViscoAcousticWave(LinearOperator):
         src_y: NDArray = None,
         rec_y: NDArray = None,
         dt: int = None,
-        dswap: bool = False,
-        dswap_disks: int = 1,
-        dswap_folder: str = None,
-        dswap_folder_path: str = None,
-        dswap_compression: str = None,
-        dswap_compression_value: float | int = None,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
+
+        is_2d = len(shape) == 2
+        is_3d = len(shape) == 3
+
+        if is_2d and (rec_y is not None or src_y is not None):
+            raise Exception("Attempting to create a 3D operator using a 2D intended class!")
+
+        if is_3d and (rec_y is None or src_y is None):
+            raise Exception("Attempting to create a 2D operator using a 3D intended class!")
 
         # create model
         self._create_model(shape, origin, spacing, vp, qp, b, space_order, nbl, dt)
@@ -1767,14 +1281,6 @@ class _ViscoAcousticWave(LinearOperator):
         self.kernel = kernel
         self.time_order = time_order
         self.karguments = {}
-        self._dswap_opt = {
-            "dswap": dswap,
-            "dswap_disks": dswap_disks,
-            "dswap_folder": dswap_folder,
-            "dswap_folder_path": dswap_folder_path,
-            "dswap_compression": dswap_compression,
-            "dswap_compression_value": dswap_compression_value,
-        }
 
         super().__init__(
             dtype=np.dtype(dtype),
@@ -1833,69 +1339,6 @@ class _ViscoAcousticWave(LinearOperator):
             dt=dt,
         )
 
-    def _create_geometry(
-        self,
-        src_x: NDArray,
-        src_y: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_y: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str,
-        f0: float = 20.0,
-    ) -> None:
-        """Create geometry and time axis
-
-        Parameters
-        ----------
-        src_x : :obj:`numpy.ndarray`
-            Source x-coordinates in m
-        src_y : :obj:`numpy.ndarray`
-            Source y-coordinates in m
-        src_z : :obj:`numpy.ndarray` or :obj:`float`
-            Source z-coordinates in m
-        rec_x : :obj:`numpy.ndarray`
-            Receiver x-coordinates in m
-        rec_y : :obj:`numpy.ndarray`
-            Receiver y-coordinates in m
-        rec_z : :obj:`numpy.ndarray` or :obj:`float`
-            Receiver z-coordinates in m
-        t0 : :obj:`float`
-            Initial time
-        tn : :obj:`int`
-            Number of time samples
-        src_type : :obj:`str`
-            Source type
-        f0 : :obj:`float`, optional
-            Source peak frequency (Hz)
-
-        """
-
-        nsrc, nrec = len(src_x), len(rec_x)
-        src_coordinates = np.empty((nsrc, self.model.dim))
-        src_coordinates[:, 0] = src_x
-        src_coordinates[:, -1] = src_z
-        if self.model.dim == 3:
-            src_coordinates[:, 1] = src_y
-
-        rec_coordinates = np.empty((nrec, self.model.dim))
-        rec_coordinates[:, 0] = rec_x
-        rec_coordinates[:, -1] = rec_z
-        if self.model.dim == 3:
-            rec_coordinates[:, 1] = rec_y
-
-        self.geometry = AcquisitionGeometry(
-            self.model,
-            rec_coordinates,
-            src_coordinates,
-            t0,
-            tn,
-            src_type=src_type,
-            f0=None if f0 is None else f0 * 1e-3,
-        )
-
     def _fwd_oneshot(self, solver: AcousticWaveSolver, v: NDArray) -> NDArray:
         """Forward modelling for one shot
 
@@ -1948,7 +1391,6 @@ class _ViscoAcousticWave(LinearOperator):
             space_order=self.space_order,
             kernel=self.kernel,
             time_order=self.time_order,
-            **self._dswap_opt,
         )
         nsrc = self.geometry.src_positions.shape[0]
         dtot = []
@@ -1968,90 +1410,6 @@ class _ViscoAcousticWave(LinearOperator):
             self._acoustic_matvec = self._fwd_allshots
             self._acoustic_rmatvec = self._adj_allshots
 
-    def create_receiver(
-        self, name, rx=None, ry=None, rz=None, t0=None, tn=None, dt=None
-    ):
-
-        if self.model.dim == 2 and ry is not None:
-            raise Exception("Attempting to create 3D receiver for a 2D operator!")
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-
-        rx = rx if rx is not None else self.geometry.rec_positions[:, 0]
-        rz = rz if rz is not None else self.geometry.rec_positions[:, -1]
-        if self.model.dim == 3:
-            ry = ry if ry is not None else self.geometry.rec_positions[:, 1]
-
-        nrec = len(rx)
-
-        rec_coordinates = np.empty((nrec, 3))
-        rec_coordinates[:, 0] = rx
-        rec_coordinates[:, -1] = rz
-        if self.model.dim == 3:
-            rec_coordinates[:, 1] = ry
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-        return Receiver(
-            name=name,
-            grid=self.geometry.grid,
-            time_range=time_axis,
-            npoint=nrec,
-            coordinates=rec_coordinates,
-        )
-
-    def create_source(
-        self,
-        name,
-        sx=None,
-        sy=None,
-        sz=None,
-        t0=None,
-        tn=None,
-        dt=None,
-        f0=None,
-        src_type=None,
-    ):
-
-        if self.model.dim == 2 and sy is not None:
-            raise Exception("Attempting to create 3D source for a 2D operator!")
-
-        tn = tn or self.geometry.tn
-        t0 = t0 or self.geometry.t0
-        dt = dt or self.model.critical_dt
-        f0 = f0 or self.geometry.f0
-
-        src_type = src_type or self.geometry.src_type
-
-        sx = sx or self.geometry.src_positions[:, 0]
-        sz = sz or self.geometry.src_positions[:, -1]
-        if self.model.dim == 3:
-            sy = sy or self.geometry.src_positions[:, 1]
-
-        nsrc = len(sx)
-
-        src_coordinates = np.empty((nsrc, 3))
-        src_coordinates[:, 0] = sx
-        src_coordinates[:, -1] = sz
-        if self.model.dim == 3:
-            src_coordinates[:, 1] = sy
-
-        time_axis = TimeAxis(start=t0, stop=tn, step=self.geometry.dt)
-
-        return sources[src_type](
-            name=name,
-            grid=self.geometry.grid,
-            f0=f0,
-            time_range=time_axis,
-            npoint=nsrc,
-            coordinates=src_coordinates,
-            t0=t0,
-        )
-
-    def add_args(self, **kwargs):
-        self.karguments = kwargs
-
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
         y = self._acoustic_matvec(x)
@@ -2063,139 +1421,9 @@ class _ViscoAcousticWave(LinearOperator):
         return y
 
 
-class ViscoAcousticWave2D(_ViscoAcousticWave):
-    def __init__(
-        self,
-        shape: InputDimsLike,
-        origin: SamplingLike,
-        spacing: SamplingLike,
-        vp: NDArray,
-        qp: NDArray,
-        b: NDArray,
-        src_x: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str = "Ricker",
-        space_order: int = 6,
-        kernel: str = "sls",
-        time_order: int = 2,
-        nbl: int = 20,
-        f0: float = 20.0,
-        checkpointing: bool = False,
-        dtype: DTypeLike = "float32",
-        name: str = "A",
-        op_name: str = "fwd",
-        dt: int = None,
-        **kwargs,
-    ) -> None:
-
-        if len(shape) != 2:
-            raise Exception(
-                "Attempting to create a 3D operator using a 2D intended class!"
-            )
-
-        super().__init__(
-            shape=shape,
-            origin=origin,
-            spacing=spacing,
-            vp=vp,
-            qp=qp,
-            b=b,
-            src_x=src_x,
-            src_z=src_z,
-            rec_x=rec_x,
-            rec_z=rec_z,
-            t0=t0,
-            tn=tn,
-            src_type=src_type,
-            space_order=space_order,
-            kernel=kernel,
-            time_order=time_order,
-            nbl=nbl,
-            f0=f0,
-            checkpointing=checkpointing,
-            dtype=dtype,
-            name=name,
-            op_name=op_name,
-            dt=dt,
-            **kwargs,
-        )
-
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        return m[nbl:-nbl, nbl:-nbl]
-
-
-class ViscoAcousticWave3D(_ViscoAcousticWave):
-    def __init__(
-        self,
-        shape: InputDimsLike,
-        origin: SamplingLike,
-        spacing: SamplingLike,
-        vp: NDArray,
-        qp: NDArray,
-        b: NDArray,
-        src_x: NDArray,
-        src_y: NDArray,
-        src_z: NDArray,
-        rec_x: NDArray,
-        rec_y: NDArray,
-        rec_z: NDArray,
-        t0: float,
-        tn: int,
-        src_type: str = "Ricker",
-        space_order: int = 6,
-        kernel: str = "sls",
-        time_order: int = 2,
-        nbl: int = 20,
-        f0: float = 20.0,
-        checkpointing: bool = False,
-        dtype: DTypeLike = "float32",
-        name: str = "A",
-        op_name: str = "fwd",
-        dt: int = None,
-        **kwargs,
-    ) -> None:
-
-        if len(shape) != 3:
-            raise Exception(
-                "Attempting to create a 2D operator with a 3D intended class!"
-            )
-
-        super().__init__(
-            shape=shape,
-            origin=origin,
-            spacing=spacing,
-            vp=vp,
-            qp=qp,
-            b=b,
-            src_x=src_x,
-            src_y=src_y,
-            src_z=src_z,
-            rec_x=rec_x,
-            rec_y=rec_y,
-            rec_z=rec_z,
-            t0=t0,
-            tn=tn,
-            src_type=src_type,
-            space_order=space_order,
-            kernel=kernel,
-            time_order=time_order,
-            nbl=nbl,
-            f0=f0,
-            checkpointing=checkpointing,
-            dtype=dtype,
-            name=name,
-            op_name=op_name,
-            dt=dt,
-            **kwargs,
-        )
-
-    @staticmethod
-    def _crop_model(m: NDArray, nbl: int) -> NDArray:
-        """Remove absorbing boundaries from model"""
-        return m[nbl:-nbl, nbl:-nbl, nbl:-nbl]
+AcousticWave2D = _AcousticWave
+AcousticWave3D = _AcousticWave
+ElasticWave2D = _ElasticWave
+ElasticWave3D = _ElasticWave
+ViscoAcousticWave2D = _ViscoAcousticWave
+ViscoAcousticWave3D = _ViscoAcousticWave
