@@ -55,12 +55,12 @@ def test_getData_concatenation():
     segyReader = ReadSEGY2D(path_segy)
 
     # Retrieve data for multiple shots
-    data1 = segyReader.getData(index=0 + first_index, chunk=1)
-    data2 = segyReader.getData(index=1 + first_index, chunk=1)
-    data3 = segyReader.getData(index=2 + first_index, chunk=1)
+    data1 = segyReader.getData(index=0 + first_index, chunk_size=1)
+    data2 = segyReader.getData(index=1 + first_index, chunk_size=1)
+    data3 = segyReader.getData(index=2 + first_index, chunk_size=1)
 
     # Retrieve concatenated data
-    concatenated_data = segyReader.getData(index=0 + first_index, chunk=3)
+    concatenated_data = segyReader.getData(index=0 + first_index, chunk_size=3)
 
     # Check if concatenation is as expected
     expected_concatenation = np.concatenate([data1, data2, data3])
@@ -69,6 +69,13 @@ def test_getData_concatenation():
 
 @pytest.mark.parametrize("chunk_size, nshots", [(3, 3), (3, 6), (5, 19), (10, None)])
 def test_getOperator(chunk_size, nshots):
+    """
+    Test the creation of operators from SEGY data.
+
+    Parameters:
+    chunk_size (int): Number of shots to process in each chunk.
+    nshots (int or None): Total number of shots to process. If None, process all available shots.
+    """
     path_segy = "/home/gustavo.coelho/segy-files/ModelShots/Anisotropic_FD_Model_Shots_part1.sgy"
     first_index = 1  # index do primeiro tiro do arquivo segy. A depender do arquivo pode variar começando em 0 ou em 1.
     segyReader = ReadSEGY2D(path_segy)
@@ -89,12 +96,11 @@ def test_getOperator(chunk_size, nshots):
 
     end_idx = nshots + first_index if nshots else segyReader.nsrc
     # Criação manual dos operadores de referência
-    reference_operators = [create_operator_from_segy(segyReader, shot_id, shape, origin, spacing, v, nbl, space_order, t0, src_type, f0, dtype, tn, dt)
+    reference_operators = [create_operator_from_segy(segyReader, shot_id, shape, origin, spacing,
+                                                     v, nbl, space_order, t0, src_type, f0, dtype, tn, dt)
                            for shot_id in range(0 + first_index, end_idx)]
 
     # Teste de consistência entre os operadores retornados e os operadores esperados
     for i, Aop in enumerate(Aops):
-        for j in range(chunk_size):
-            if i * chunk_size + j > len(Aop.ops):
-                break
+        for j in range(len(Aop.ops)):
             assert np.array_equal(Aop.ops[j].geometry.rec_positions, reference_operators[i * chunk_size + j].geometry.rec_positions), f"Falha no teste do operador {i}, shot {j}"

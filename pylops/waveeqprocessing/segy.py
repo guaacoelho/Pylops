@@ -70,8 +70,8 @@ class ReadSEGY2D():
         # Read velocity model
         f = segyio.open(path, iline=segyio.tracefield.TraceField.FieldRecord,
                         xline=segyio.tracefield.TraceField.CDP)
-        xl, il, t = f.xlines, f.ilines, f.samples
 
+        xl, il, t = f.xlines, f.ilines, f.samples
         if len(il) != 1:
             dims = (len(xl), len(il), len(t))
         else:
@@ -113,7 +113,7 @@ class ReadSEGY2D():
             dt = f.bin[segyio.BinField.Interval]  # microseconds
         return dt / 1000  # return in miliseconds
 
-    def getData(self, index=1, chunk=1):
+    def getData(self, index=1, chunk_size=1):
         """
         Return the data from a specific index. The data returned is a 1d array to
         match the output from VStack
@@ -122,13 +122,13 @@ class ReadSEGY2D():
         ----------
         index : :obj:`int`
             Index of the first shot of the chunck
-        chunk : :obj:`int`
+        chunk_size : :obj:`int`
             Size of the chunk. Delimits how many shots will have data returned
         """
         with segyio.open(self.segyfile, "r", ignore_geometry=True) as f:
             retrieved_shot = []
 
-            for nshot in range(index, index + chunk):
+            for nshot in range(index, index + chunk_size):
                 position = self.table[nshot]['Trace_Position']
                 traces_in_shot = self.table[nshot]['Num_Traces']
                 shot_traces = f.trace[position:position + traces_in_shot]
@@ -139,19 +139,68 @@ class ReadSEGY2D():
         return np.concatenate(retrieved_shot)
 
     def _getOperatorChunk(self, shape, origin, spacing, vp0, nbl, space_order, t0, dt, tn, src_type, f0, dtype, chunk, src0_idx, nshots):
+        """
+        Create a list of VStacks, where each VStack contains a specific number of AcousticWave2D operators.
+
+        Parameters
+        ----------
+        shape : tuple
+            Shape of the computational grid.
+        origin : tuple
+            Origin of the computational grid.
+        spacing : tuple
+            Spacing of the computational grid.
+        vp0 : ndarray
+            Velocity model.
+        nbl : int
+            Number of boundary layers.
+        space_order : int
+            Space order of the finite-difference scheme.
+        t0 : float
+            Start time of the simulation.
+        dt : float
+            Time step of the simulation.
+        tn : float
+            End time of the simulation.
+        src_type : str
+            Type of the source (e.g., 'Ricker').
+        f0 : float
+            Peak frequency of the source.
+        dtype : type
+            Data type of the simulation (e.g., np.float32).
+        chunk : int
+            Number of shots/operators each VStack will encompass.
+        src0_idx : int
+            Starting index of the shots.
+        nshots : int or None
+            Total number of shots to process. If None, all shots are processed.
+
+        Returns
+        -------
+        Aops : list of VStack
+            A list of VStacks, where each VStack contains a specific number of AcousticWave2D operators.
+        """
         nsrc = nshots if nshots else self.nsrc
 
         # Ajusta o limite superior para não ultrapassar o número total de fontes
+        if src0_idx >= self.nsrc :
+            raise ValueError(f"src0_idx ({src0_idx}) is out of bounds. It must be less than the total number of sources ({self.nsrc}).")
+
+        # limita o loop para sempre estar dentro da quantidade máxima de shots. Para o caso de
+        # o index inicial ser muito alto e a soma com o numero de fontes desejadas ultrapassar o
+        # index maximo do arquivo
         end_idx = min(src0_idx + nsrc, self.nsrc)
 
         Aops = []
         for isrc in range(src0_idx, end_idx, chunk):
             ops = []
-            for i in range(chunk):
-                index = isrc + i
-                # permite que a quantidade de operadores de VSTACK não seja necessáriamento igual
-                if index >= nsrc + src0_idx:
-                    break
+
+            # limita o loop para que o index esteja sempre dentro do limite máximo de fontes. Para o caso
+            # de nem todos os VStacks terem terem a mesma quantidade de operadores. Essa verificação faz com
+            # que ele pare quando não tiver mais shots desejados ao invés de percorrer todo o intervalo chunk.
+            chunk_end = min(isrc + chunk, end_idx)
+
+            for index in range(isrc, chunk_end):
                 sx, sz = self.getSourceCoords(index)
                 rx, rz = self.getReceiverCoords(index)
                 Aop = AcousticWave2D(shape=shape, origin=origin, spacing=spacing, vp=vp0, nbl=nbl, space_order=space_order,
