@@ -138,7 +138,7 @@ class ReadSEGY2D():
         # concatena todos os dados em um np.array 1D
         return np.concatenate(retrieved_shot)
 
-    def _getOperatorChunk(self, shape, origin, spacing, vp0, nbl, space_order, t0, dt, tn, src_type, f0, dtype, chunk, src0_idx, nshots):
+    def _getOperatorChunk(self, shape, origin, spacing, vp0, nbl, space_order, t0, tn, src_type, f0, dtype, chunk, src0_idx, nshots):
         """
         Create a list of VStacks, where each VStack contains a specific number of AcousticWave2D operators.
 
@@ -158,8 +158,6 @@ class ReadSEGY2D():
             Space order of the finite-difference scheme.
         t0 : float
             Start time of the simulation.
-        dt : float
-            Time step of the simulation.
         tn : float
             End time of the simulation.
         src_type : str
@@ -186,31 +184,33 @@ class ReadSEGY2D():
         if src0_idx >= self.nsrc :
             raise ValueError(f"src0_idx ({src0_idx}) is out of bounds. It must be less than the total number of sources ({self.nsrc}).")
 
-        # limita o loop para sempre estar dentro da quantidade máxima de shots. Para o caso de
-        # o index inicial ser muito alto e a soma com o numero de fontes desejadas ultrapassar o
-        # index maximo do arquivo
+        # Limit the loop to always stay within the maximum number of shots. This ensures that
+        # if the starting index is too high and the sum with the desired number of sources exceeds
+        # the maximum index in the file, the loop remains within bounds.
         end_idx = min(src0_idx + nsrc, self.nsrc)
 
         Aops = []
         for isrc in range(src0_idx, end_idx, chunk):
             ops = []
 
-            # limita o loop para que o index esteja sempre dentro do limite máximo de fontes. Para o caso
-            # de nem todos os VStacks terem terem a mesma quantidade de operadores. Essa verificação faz com
-            # que ele pare quando não tiver mais shots desejados ao invés de percorrer todo o intervalo chunk.
+            # Limit the loop to ensure the index always stays within the maximum number of sources.
+            # This handles cases where not all VStacks have the same number of operators.
+            # This check ensures the loop stops when there are no more desired shots to process,
+            # instead of iterating through the entire chunk range.
             chunk_end = min(isrc + chunk, end_idx)
 
             for index in range(isrc, chunk_end):
                 sx, sz = self.getSourceCoords(index)
                 rx, rz = self.getReceiverCoords(index)
+
                 Aop = AcousticWave2D(shape=shape, origin=origin, spacing=spacing, vp=vp0, nbl=nbl, space_order=space_order,
                                      src_x=sx, src_z=sz, rec_x=rx, rec_z=rz, t0=t0, tn=tn, src_type=src_type, f0=f0, dtype=dtype,
-                                     dt=dt)
+                                     op_name="fwd")
                 ops.append(Aop)
             Aops.append(VStack(ops))
         return Aops
 
-    def _getOperatorUnique(self, shape, origin, spacing, vp0, nbl, space_order, t0, dt, tn, src_type, f0, dtype, src0_idx, nshots):
+    def _getOperatorUnique(self, shape, origin, spacing, vp0, nbl, space_order, t0, tn, src_type, f0, dtype, src0_idx, nshots):
         nsrc = nshots if nshots else self.nsrc
 
         # Ajusta o limite superior para não ultrapassar o número total de fontes
@@ -222,7 +222,7 @@ class ReadSEGY2D():
             rx, rz = self.getReceiverCoords(isrc)
             Aop = AcousticWave2D(shape=shape, origin=origin, spacing=spacing, vp=vp0, nbl=nbl, space_order=space_order,
                                  src_x=sx, src_z=sz, rec_x=rx, rec_z=rz, t0=t0, tn=tn, src_type=src_type, f0=f0, dtype=dtype,
-                                 dt=dt)
+                                 op_name="fwd")
             Aops.append(Aop)
         return VStack(Aops)
 
@@ -236,9 +236,8 @@ class ReadSEGY2D():
 
         Thus, chunk defines how many shots/AcousticWave2D operators each VStack will encompass.
         """
-        dt = self.getDt()
         tn = self.getTn()
 
         if chunk == 1:
-            return self._getOperatorUnique(shape, origin, spacing, vp0, nbl, space_order, t0, dt, tn, src_type, f0, dtype, src0_idx, nshots)
-        return self._getOperatorChunk(shape, origin, spacing, vp0, nbl, space_order, t0, dt, tn, src_type, f0, dtype, chunk, src0_idx, nshots)
+            return self._getOperatorUnique(shape, origin, spacing, vp0, nbl, space_order, t0, tn, src_type, f0, dtype, src0_idx, nshots)
+        return self._getOperatorChunk(shape, origin, spacing, vp0, nbl, space_order, t0, tn, src_type, f0, dtype, chunk, src0_idx, nshots)
