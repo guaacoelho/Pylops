@@ -49,21 +49,19 @@ def create_operator_from_segy(segyReader, shot_id, shape, origin, spacing, v, nb
     )
 
 
-def test_getData_concatenation():
+@pytest.mark.parametrize("chunk_size", [3, 6 , 10, 20, 39])
+def test_getData_concatenation(chunk_size):
     path_segy = "/home/gustavo.coelho/segy-files/ModelShots/Anisotropic_FD_Model_Shots_part1.sgy"
     first_index = 1  # index do primeiro tiro do arquivo segy. A depender do arquivo pode variar começando em 0 ou em 1.
     segyReader = ReadSEGY2D(path_segy)
 
-    # Retrieve data for multiple shots
-    data1 = segyReader.getData(index=0 + first_index, chunk_size=1)
-    data2 = segyReader.getData(index=1 + first_index, chunk_size=1)
-    data3 = segyReader.getData(index=2 + first_index, chunk_size=1)
+    expected_concatenation = [segyReader.getData(index=i + first_index, chunk_size=1) for i in range(chunk_size)]
+    expected_concatenation = np.concatenate(expected_concatenation)
 
     # Retrieve concatenated data
-    concatenated_data = segyReader.getData(index=0 + first_index, chunk_size=3)
+    concatenated_data = segyReader.getData(index=0 + first_index, chunk_size=chunk_size)
 
     # Check if concatenation is as expected
-    expected_concatenation = np.concatenate([data1, data2, data3])
     assert np.array_equal(concatenated_data, expected_concatenation), "Concatenation of data is not as expected"
 
 
