@@ -113,7 +113,7 @@ class ReadSEGY2D():
             dt = f.bin[segyio.BinField.Interval]  # microseconds
         return dt / 1000  # return in miliseconds
 
-    def getData(self, index=1, chunk_size=1):
+    def getData(self, index: int, chunk_size=1):
         """
         Return the data from a specific index. The data returned is a 1d array to
         match the output from VStack
