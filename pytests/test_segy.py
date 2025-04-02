@@ -37,7 +37,7 @@ def get_parameters():
     return shape, spacing, origin, space_order, nbl, dtype, src_type, t0, f0, v
 
 
-def create_operator_from_segy(segyReader, shot_id, shape, origin, spacing, v, nbl, space_order, t0, src_type, f0, dtype, tn, dt):
+def create_operator_from_segy(segyReader, shot_id, shape, origin, spacing, v, nbl, space_order, t0, src_type, f0, dtype, tn):
     """Cria uma instância de AcousticWave2D com base nos dados do SEGY."""
     sx, sz = segyReader.getSourceCoords(shot_id)
     rx, rz = segyReader.getReceiverCoords(shot_id)
@@ -45,8 +45,7 @@ def create_operator_from_segy(segyReader, shot_id, shape, origin, spacing, v, nb
     return AcousticWave2D(
         shape=shape, origin=origin, spacing=spacing, vp=v, nbl=nbl,
         space_order=space_order, src_x=sx, src_z=sz, rec_x=rx, rec_z=rz,
-        t0=t0, tn=tn, src_type=src_type, f0=f0, dtype=dtype, dt=dt
-    )
+        t0=t0, tn=tn, src_type=src_type, f0=f0, dtype=dtype)
 
 
 @pytest.mark.parametrize("chunk_size", [3, 6 , 10, 20, 39])
@@ -89,14 +88,13 @@ def test_getOperator(chunk_size, nshots):
     }
     Aops = segyReader.getOperator(**operator_params)
 
-    dt = segyReader.getDt()
     tn = segyReader.getTn()
 
     end_idx = nshots + first_index if nshots else segyReader.nsrc
     # Criação manual dos operadores de referência
     reference_operators = [create_operator_from_segy(segyReader, shot_id, shape, origin, spacing,
-                                                     v, nbl, space_order, t0, src_type, f0, dtype, tn, dt)
-                           for shot_id in range(0 + first_index, end_idx)]
+                                                     v, nbl, space_order, t0, src_type, f0, dtype, tn)
+                           for shot_id in range(first_index, end_idx)]
 
     # Teste de consistência entre os operadores retornados e os operadores esperados
     for i, Aop in enumerate(Aops):
