@@ -15,7 +15,6 @@ class ReadSEGY2D():
 
         self.segyfile = segy_path
         self.table = self.make_lookup_table(segy_path)
-        self.isRecVariable = self._isRecVariable()
         self.nsrc = len(self.table)
 
     def make_lookup_table(self, sgy_file):
