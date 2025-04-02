@@ -18,18 +18,6 @@ class ReadSEGY2D():
         self.isRecVariable = self._isRecVariable()
         self.nsrc = len(self.table)
 
-    def _isRecVariable(self):
-        """
-        Verify if the number of receivers per shots is Regular.
-
-        return True if all shots has the same number of receivers, and False otherwise
-        """
-        # get a set of values representing the number of traces per shot. In other words, the number os receivers per shot
-        n_traces_per_shots = set(v["Num_Traces"] for v in self.table.values())
-
-        # If the lenght of the set is 1, means that all the shots has the same number os receivers
-        return len(n_traces_per_shots) != 1
-
     def make_lookup_table(self, sgy_file):
         '''
         Make a lookup of shots, where the keys are the shot record IDs being
