@@ -64,8 +64,8 @@ def test_getData_concatenation(chunk_size):
     assert np.array_equal(concatenated_data, expected_concatenation), "Concatenation of data is not as expected"
 
 
-@pytest.mark.parametrize("chunk_size, nshots", [(3, 3), (3, 6), (5, 19), (10, None)])
-def test_getOperator(chunk_size, nshots):
+@pytest.mark.parametrize("chunk_size, nshots", [(1, 10), (3, 3), (3, 6), (7, 3), (5, 19)])
+def test_getOperatorChunk(chunk_size, nshots):
     """
     Test the creation of operators from SEGY data.
 
@@ -96,7 +96,16 @@ def test_getOperator(chunk_size, nshots):
                                                      v, nbl, space_order, t0, src_type, f0, dtype, tn)
                            for shot_id in range(first_index, end_idx)]
 
-    # Teste de consistência entre os operadores retornados e os operadores esperados
+    # number of operators at Aops and reference_operators must be the same
+    nops_Aops = 0
+    for Aop in Aops:
+        nops_Aops += len(Aop.ops)
+    nops_reference = len(reference_operators)
+    assert nops_Aops == nops_reference, f"Number of operators in Aops ({nops_Aops}) does not match reference ({nops_reference})"
+
+    #  Verify if receiver coordinates and velocity model are the same
+    #  between the two sets of operators
     for i, Aop in enumerate(Aops):
         for j in range(len(Aop.ops)):
             assert np.array_equal(Aop.ops[j].geometry.rec_positions, reference_operators[i * chunk_size + j].geometry.rec_positions), f"Falha no teste do operador {i}, shot {j}"
+            assert np.array_equal(Aop.ops[j].model.vp.data, reference_operators[i * chunk_size + j].model.vp.data)
