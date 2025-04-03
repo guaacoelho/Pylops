@@ -177,23 +177,22 @@ class ReadSEGY2D():
         end_idx = min(src0_idx + nsrc, self.nsrc)
 
         Aops = []
-        for isrc in range(src0_idx, end_idx, chunk):
-            ops = []
+        ops = []
+        for ii, isrc in enumerate(range(src0_idx, end_idx)):
+            sx, sz = self.getSourceCoords(isrc)
+            rx, rz = self.getReceiverCoords(isrc)
 
-            # Limit the loop to ensure the index always stays within the maximum number of sources.
-            # This handles cases where not all VStacks have the same number of operators.
-            # This check ensures the loop stops when there are no more desired shots to process,
-            # instead of iterating through the entire chunk range.
-            chunk_end = min(isrc + chunk, end_idx)
+            Aop = AcousticWave2D(shape=shape, origin=origin, spacing=spacing, vp=vp0, nbl=nbl, space_order=space_order,
+                                 src_x=sx, src_z=sz, rec_x=rx, rec_z=rz, t0=t0, tn=tn, src_type=src_type, f0=f0, dtype=dtype,
+                                 op_name="fwd")
+            ops.append(Aop)
 
-            for index in range(isrc, chunk_end):
-                sx, sz = self.getSourceCoords(index)
-                rx, rz = self.getReceiverCoords(index)
-
-                Aop = AcousticWave2D(shape=shape, origin=origin, spacing=spacing, vp=vp0, nbl=nbl, space_order=space_order,
-                                     src_x=sx, src_z=sz, rec_x=rx, rec_z=rz, t0=t0, tn=tn, src_type=src_type, f0=f0, dtype=dtype,
-                                     op_name="fwd")
-                ops.append(Aop)
+            # If it has created the _wave operator chunk times, it creates Vstacks and reinitializes the ops list
+            if (ii + 1) % chunk == 0:
+                Aops.append(VStack(ops))
+                ops = []
+        # Append any remaining operators to Aops
+        if ops:
             Aops.append(VStack(ops))
         return Aops
 
@@ -213,7 +212,7 @@ class ReadSEGY2D():
             Aops.append(Aop)
         return VStack(Aops)
 
-    def getOperator(self, shape, origin, spacing, vp0, nbl, space_order, t0, src_type, f0, dtype, chunk=1, src0_idx=1, nshots=None):
+    def getOperator(self, shape, origin, spacing, vp0, nbl, space_order, t0, src_type, f0, dtype, chunk=None, src0_idx=1, nshots=None):
         """
         The idea is that each operator is directly related to a shot present in the SEGY file, so we will not have
         problems with the dimensions of the output data. The basic idea would be a VStack containing
@@ -225,6 +224,6 @@ class ReadSEGY2D():
         """
         tn = self.getTn()
 
-        if chunk == 1:
-            return self._getOperatorUnique(shape, origin, spacing, vp0, nbl, space_order, t0, tn, src_type, f0, dtype, src0_idx, nshots)
-        return self._getOperatorChunk(shape, origin, spacing, vp0, nbl, space_order, t0, tn, src_type, f0, dtype, chunk, src0_idx, nshots)
+        if chunk:
+            return self._getOperatorChunk(shape, origin, spacing, vp0, nbl, space_order, t0, tn, src_type, f0, dtype, chunk, src0_idx, nshots)
+        return self._getOperatorUnique(shape, origin, spacing, vp0, nbl, space_order, t0, tn, src_type, f0, dtype, src0_idx, nshots)
