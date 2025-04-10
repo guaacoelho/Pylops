@@ -16,6 +16,7 @@ from pylops import LinearOperator
 from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
+from pylops.waveeqprocessing.segy import  ReadSEGY2D # type: ignore
 
 devito_message = deps.devito_import("the twoway module")
 
@@ -330,6 +331,7 @@ class _AcousticWave(_Wave):
         src_y: NDArray = None,
         rec_y: NDArray = None,
         dt: int = None,
+        segy_path: str = None,
         dswap: bool = False,
         dswap_disks: int = 1,
         dswap_folder: str = None,
@@ -361,7 +363,7 @@ class _AcousticWave(_Wave):
         )
         self.checkpointing = checkpointing
         self.karguments = {}
-
+        self.segyReader = ReadSEGY2D(segy_path) if segy_path else None
         self._dswap_opt = {
             "dswap": dswap,
             "dswap_disks": dswap_disks,
