@@ -17,6 +17,7 @@ from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
 from pylops.waveeqprocessing.segy import  ReadSEGY2D # type: ignore
+from pylops.waveeqprocessing.decorators import update_op_coords_if_needed
 
 devito_message = deps.devito_import("the twoway module")
 
@@ -239,6 +240,62 @@ class _Wave(LinearOperator):
             coordinates=src_coordinates,
             t0=t0,
         )
+
+    def _update_dimensions(self, new_dims, new_dimsd):
+
+        del self.dims
+        del self.dimsd
+
+        self.shape = (np.prod(new_dimsd), np.prod(new_dims))
+
+        self.dims = new_dims
+        self.dimsd = new_dimsd
+
+    def _update_geometry(self, rx, rz, sx, sz, nrecs, tn):
+    
+        new_rec_positions = np.zeros((nrecs, 2))
+        new_rec_positions[:, 0] = rx
+        new_rec_positions[:, -1] = rz
+
+        new_src_positions = np.zeros((1, 2))
+        new_src_positions[:, 0] = sx
+        new_src_positions[:, -1] = sz
+
+        self.geometry = AcquisitionGeometry(
+            self.model,
+            new_rec_positions,
+            new_src_positions,
+            self.geometry.t0,
+            tn,
+            src_type=self.geometry.src_type,
+            f0=self.geometry.f0
+        )
+
+    def _update_modeldt(self, dt):
+        self.model._dt = dt
+
+    def _update_op_coords(self):
+        # id_src = self.karguments.get("idsrc_segy", None)
+        try:
+            id_src = self.segyReader.id_src
+        except:
+            raise Exception("This operator uses a SEGY file, but the shot index was not defined.")
+
+        rx, rz = self.segyReader.getReceiverCoords(id_src)
+        sx, sz = self.segyReader.getSourceCoords(id_src)
+        tn = self.segyReader.getTn()
+        dt = self.segyReader.getDt()
+
+        nrec = len(rx)
+        dims_update = self.segyReader.isRecVariable and nrec != self.geometry.nrec
+
+        self._update_modeldt(dt)
+        self._update_geometry(rx, rz, sx, sz, nrec, tn=tn)
+
+        # Check if the number of receivers is variable and differs from the current geometry.
+        # If so, update the dimensions to match the new number of receivers for the current shot.
+        if dims_update: 
+            self._update_dimensions(new_dims=self.dims, new_dimsd=(1, nrec, self.geometry.nt))
 
     def add_args(self, **kwargs):
         self.karguments = kwargs
@@ -730,6 +787,10 @@ class _AcousticWave(_Wave):
         if op_name == "fwd":
             self._acoustic_matvec = self._fwd_allshots
         self._acoustic_rmatvec = self._bornadj_allshots
+    
+    @update_op_coords_if_needed
+    def __mul__(self, x: Union[float, LinearOperator]) -> LinearOperator:
+        return super().dot(x)
 
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
