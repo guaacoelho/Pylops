@@ -336,6 +336,7 @@ class _AcousticWave(_Wave):
         dswap_folder_path: str = None,
         dswap_compression: str = None,
         dswap_compression_value: float | int = None,
+        dswap_verbose: bool = False,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -368,6 +369,7 @@ class _AcousticWave(_Wave):
             "dswap_folder_path": dswap_folder_path,
             "dswap_compression": dswap_compression,
             "dswap_compression_value": dswap_compression_value,
+            "dswap_verbose": dswap_verbose,
         }
 
         super().__init__(
@@ -832,6 +834,7 @@ class _ElasticWave(_Wave):
         dswap_folder_path: str = None,
         dswap_compression: str = None,
         dswap_compression_value: float | int = None,
+        dswap_verbose: bool = False,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -873,6 +876,7 @@ class _ElasticWave(_Wave):
             "dswap_folder_path": dswap_folder_path,
             "dswap_compression": dswap_compression,
             "dswap_compression_value": dswap_compression_value,
+            "dswap_verbose": dswap_verbose,
         }
 
         super().__init__(
