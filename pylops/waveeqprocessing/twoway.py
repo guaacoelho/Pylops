@@ -26,7 +26,7 @@ if devito_message is None:
     from examples.seismic import AcquisitionGeometry, Model, Receiver
     from examples.seismic.acoustic import AcousticWaveSolver
     from examples.seismic.source import TimeAxis
-    from examples.seismic.stiffness import IsoElasticWaveSolver, ISOSeismicModel
+    from examples.seismic.stiffness import ElasticModel, IsoElasticWaveSolver
     from examples.seismic.utils import PointSource, sources
     from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
 
@@ -920,7 +920,7 @@ class _ElasticWave(_Wave):
 
         """
         self.space_order = space_order
-        self.model = ISOSeismicModel(
+        self.model = ElasticModel(
             space_order=space_order,
             vp=vp / 1000,
             vs=vs / 1000,
