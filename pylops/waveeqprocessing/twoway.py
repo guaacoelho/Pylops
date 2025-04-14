@@ -1040,6 +1040,9 @@ class _ElasticWave(_Wave):
             Model
 
         """
+        # set disk_swap bool
+        dswap = self._dswap_opt.get("dswap", False)
+
         dim = self.model.dim
         # create boundary data
         rec_vx = self.geometry.rec.copy()
@@ -1067,7 +1070,7 @@ class _ElasticWave(_Wave):
             u0 = self.src_wavefield[isrc]
         else:
             par = self.karguments.get("par")
-            u0 = solver.forward(save=True, par=par)[dim + 1]
+            u0 = solver.forward(save=True if not dswap else False, par=par)[dim + 1]
 
         # adjoint modelling (reverse wavefield plus imaging condition)
         grad1, grad2, grad3 = solver.jacobian_adjoint(
