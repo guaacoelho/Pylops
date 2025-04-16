@@ -28,7 +28,7 @@ if devito_message is None:
     from examples.seismic import AcquisitionGeometry, Model, Receiver
     from examples.seismic.acoustic import AcousticWaveSolver
     from examples.seismic.source import TimeAxis
-    from examples.seismic.stiffness import ElasticModel, IsoElasticWaveSolver
+    from examples.seismic.stiffness import IsoElasticWaveSolver, ElasticModel
     from examples.seismic.utils import PointSource, sources
     from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
 
@@ -242,6 +242,17 @@ class _Wave(LinearOperator):
         )
 
     def _update_dimensions(self, new_dims, new_dimsd):
+        """
+        Update the dimensions and shape of the object.
+
+        Parameters:
+        -----------
+        new_dims : tuple
+            The new value of dims.
+        new_dimsd : tuple
+            The new value of dimsd.
+
+        """
 
         del self.dims
         del self.dimsd
@@ -252,7 +263,33 @@ class _Wave(LinearOperator):
         self.dimsd = new_dimsd
 
     def _update_geometry(self, rx, rz, sx, sz, nrecs, tn):
-    
+        """
+        Update the geometry with new receiver and source positions.
+
+        Parameters
+        ----------
+        rx : array-like
+            Array containing the x-coordinates of the receivers.
+        rz : array-like
+            Array containing the z-coordinates of the receivers.
+        sx : float
+            x-coordinate of the source.
+        sz : float
+            z-coordinate of the source.
+        nrecs : int
+            Number of receivers.
+        tn : float
+            Final recording time.
+
+        Notes
+        -----
+        This method updates the `geometry` attribute of the object by creating
+        a new `AcquisitionGeometry` instance with the provided receiver and 
+        source positions, as well as the updated final recording time.
+
+        For now, it only works for 2D operatores.
+        """
+
         new_rec_positions = np.zeros((nrecs, 2))
         new_rec_positions[:, 0] = rx
         new_rec_positions[:, -1] = rz
@@ -272,13 +309,26 @@ class _Wave(LinearOperator):
         )
 
     def _update_modeldt(self, dt):
+        """
+        Update the time step (dt) in the model
+        """
         self.model._dt = dt
 
     def _update_op_coords(self):
-        # id_src = self.karguments.get("idsrc_segy", None)
-        try:
-            id_src = self.segyReader.id_src
-        except:
+        """
+        Update operator coordinates and dimensions based on SEGY file data.
+
+        This method retrieves the source and receiver coordinates, time sampling
+        information, and other relevant parameters from the SEGY file associated
+        with the operator. It updates the internal model time step, geometry, and
+        dimensions as needed.
+
+        Raises:
+            Exception: If the SEGY file is used but the shot index (`id_src`) is not defined.
+        """
+        id_src = getattr(self.segyReader, "id_src", None)
+
+        if id_src is None:
             raise Exception("This operator uses a SEGY file, but the shot index was not defined.")
 
         rx, rz = self.segyReader.getReceiverCoords(id_src)
@@ -299,6 +349,15 @@ class _Wave(LinearOperator):
 
     def add_args(self, **kwargs):
         self.karguments = kwargs
+
+    def set_shotID(self, id_src):
+        """Set the shot ID for the operator"""
+        segyReader = getattr(self, "segyReader", None)
+
+        if not segyReader:
+            raise Exception("Can not set shot ID for a operator that doesn't have segyReader")
+
+        segyReader.set_shotID(id_src)
 
     @staticmethod
     def _crop_model(m: NDArray, nbl: int) -> NDArray:

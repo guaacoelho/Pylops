@@ -2,7 +2,6 @@ import segyio
 
 import numpy as np
 from pylops.basicoperators.vstack import VStack
-from pylops.waveeqprocessing.twoway import AcousticWave2D
 # from pylops.waveeqprocessing.twoway import  AcousticWave2D
 
 
@@ -70,7 +69,9 @@ class ReadSEGY2D():
         return lookup_table
 
     def getVelocityModel(self, path):
-        # Read velocity model
+        """
+        Read velocity model from a SEGY file
+        """
         f = segyio.open(path, iline=segyio.tracefield.TraceField.FieldRecord,
                         xline=segyio.tracefield.TraceField.CDP)
 
@@ -104,7 +105,6 @@ class ReadSEGY2D():
         return src_coords, rec_coords
 
     def getTn(self):
-        # f = segyio.open(self.segyfile, ignore_geometry=True)
         with segyio.open(self.segyfile, "r", ignore_geometry=True) as f:
             num_samples = len(f.samples)
             samp_int = f.bin[segyio.BinField.Interval] / 1000
@@ -122,7 +122,7 @@ class ReadSEGY2D():
         Parameters
         ----------
         index : :obj:`int`
-            Index of the first shot of the chunck
+            Index of the shot that it will get the data
         """
         with segyio.open(self.segyfile, "r", ignore_geometry=True) as f:
             retrieved_shot = []
