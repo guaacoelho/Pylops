@@ -20,14 +20,15 @@ from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
 devito_message = deps.devito_import("the twoway module")
 
 if devito_message is None:
-    from devito import Function
+    from devito import (Function, VectorFunction, VectorTimeFunction,
+                        TensorTimeFunction, Operator, Eq)
     from devito.builtins import initialize_function
 
     from examples.seismic import AcquisitionGeometry, Model, Receiver
     from examples.seismic.acoustic import AcousticWaveSolver
     from examples.seismic.source import TimeAxis
-    from examples.seismic.stiffness import IsoElasticWaveSolver, ISOSeismicModel
-    from examples.seismic.utils import PointSource, sources
+    from examples.seismic.stiffness import IsoElasticWaveSolver, ISOSeismicModel, elastic_stencil
+    from examples.seismic.utils import PointSource, sources, get_ooc_config
     from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
 
 
@@ -135,7 +136,7 @@ class _Wave(LinearOperator):
             t0,
             tn,
             src_type=src_type,
-            f0=None if f0 is None else f0 * 1e-3,
+            f0=f0
         )
 
     def updatesrc(self, wav):
@@ -242,6 +243,9 @@ class _Wave(LinearOperator):
 
     def add_args(self, **kwargs):
         self.karguments = kwargs
+        
+    def update_args(self, **kwargs):
+        self.karguments.update(kwargs)
 
     @staticmethod
     def _crop_model(m: NDArray, nbl: int) -> NDArray:
@@ -823,6 +827,8 @@ class _ElasticWave(_Wave):
         dt: int = None,
         src_y: NDArray = None,
         rec_y: NDArray = None,
+        save_wavefield = False,
+        save_bwdwavefield = False,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -845,7 +851,15 @@ class _ElasticWave(_Wave):
         self.par = par
         self.karguments = {}
         dim = self.model.dim
-
+        
+        self.save_wavefield = save_wavefield
+        if save_wavefield:
+            self.src_wavefield=[]
+            
+        self.save_bwdwavefield = save_bwdwavefield
+        if save_bwdwavefield:
+            self.bwd_wavefield=[]
+            
         n_input = 3
         num_outs = dim + 1
         dims = (n_input, self.model.vp.shape[0], self.model.vp.shape[1])
@@ -892,19 +906,18 @@ class _ElasticWave(_Wave):
         nbl : :obj:`int`, optional
             Number ordering of samples in absorbing boundaries
 
-        """
+        """     
         self.space_order = space_order
         self.model = ISOSeismicModel(
             space_order=space_order,
-            vp=vp / 1000,
-            vs=vs / 1000,
+            vp=vp/1000,
+            vs=vs/1000,
             rho=rho,
             origin=origin,
             shape=shape,
             dtype=np.float32,
             spacing=spacing,
             nbl=nbl,
-            bcs="damp",
             dt=dt,
         )
 
@@ -949,7 +962,14 @@ class _ElasticWave(_Wave):
         self.karguments.update(dict(zip(args, functions)))
 
         dim = self.model.dim
-        rec_data = list(solver.forward(**self.karguments)[0 : dim + 1])
+        
+        if self.save_wavefield:
+            rec_tau, rec_vx, rec_vy, rec_vz, v = solver.forward(**self.karguments, save=True)[0 : dim + 2]
+            self.src_wavefield.append(v)
+        else:
+            rec_tau, rec_vx, rec_vy, rec_vz = solver.forward(**self.karguments)[0 : dim + 1]
+        
+        rec_data = list([rec_tau, rec_vx, rec_vy, rec_vz])
 
         for ii, d in enumerate(rec_data):
             rec_data[ii] = (
@@ -999,7 +1019,152 @@ class _ElasticWave(_Wave):
         rec_data = list(zip(*dtot))
 
         return np.array(rec_data)
+    
+    def _imaging_operator(self, model, img, geometry, space_order, dt_ref, to_disk=None, **kwargs):
+        # Define the wavefield with the size of the model and the time dimension
+        v = VectorTimeFunction(name='v', grid=model.grid,
+                            save=geometry.nt if not to_disk else None,
+                            space_order=space_order, time_order=1)
 
+        u = VectorTimeFunction(name='u', grid=model.grid, space_order=space_order,
+                            time_order=1)
+        sig = TensorTimeFunction(name='sig', grid=model.grid, space_order=space_order,
+                                time_order=1)
+
+        eqn = elastic_stencil(model, u, sig, forward=False, par='vp-vs-rho')
+
+        u[0].data[0] = 1
+        u[0].data[1] = 1
+        u[1].data[0] = 1
+        u[1].data[1] = 1
+        u[2].data[0] = 1
+        u[2].data[1] = 1
+        
+        dt = dt_ref
+        b = 1./model.rho
+
+        # Define residual injection at the location of the forward receivers
+        rec_vx = PointSource(name='rec_vx', grid=model.grid,
+                            time_range=geometry.time_axis,
+                            coordinates=geometry.rec_positions)
+
+        rec_vz = PointSource(name='rec_vz', grid=model.grid,
+                            time_range=geometry.time_axis,
+                            coordinates=geometry.rec_positions)
+
+        rec_vy = PointSource(name='rec_vy', grid=model.grid,
+                            time_range=geometry.time_axis,
+                            coordinates=geometry.rec_positions)
+        
+
+        rec_term_vx = rec_vx.inject(field=u[0].backward, expr=dt*rec_vx*b)
+        rec_term_vz = rec_vz.inject(field=u[-1].backward, expr=dt*rec_vz*b)
+        
+        rec_expr = rec_term_vx + rec_term_vz
+
+        if model.grid.dim == 3:
+            rec_expr += rec_vy.inject(field=u[1].backward, expr=dt*rec_vy*b)
+
+        ixx_update = [Eq(img[0], img[0] + v[0] * u[0])]
+        izz_update = [Eq(img[-1], img[-1] + v[-1] * u[-1])]
+
+        img_update = ixx_update + izz_update
+
+        if model.grid.dim == 3:
+            img_update += [Eq(img[1], img[1] + v[1] * u[1])]
+            
+
+        #Configurações de dswap estarão disponíveis em self._dswap_options
+        imop = Operator(eqn + rec_expr + img_update, subs=model.spacing_map, name='Imaging', **kwargs)
+        return imop, u
+    
+    def _imaging_oneshot(self, isrc, recs, imaging, solver, **kwargs):
+        vfields = kwargs.copy()
+        dim = self.model.dim
+        
+        rec_vx = PointSource(name='dobs_vx_resam', grid=self.model.grid,
+                            time_range=self.geometry.time_axis,
+                            coordinates=self.geometry.rec_positions, data=recs[0].T)
+        rec_vz = PointSource(name='dobs_vz_resam', grid=self.model.grid,
+                            time_range=self.geometry.time_axis,
+                            coordinates=self.geometry.rec_positions, data=recs[-1].T)
+        
+        vfields.update({"rec_vx": rec_vx, "rec_vz": rec_vz})
+
+        if(dim == 3):
+            rec_vy = PointSource(name='dobs_vy_resam', grid=self.model.grid,
+                                time_range=self.geometry.time_axis,
+                                coordinates=self.geometry.rec_positions, data=recs[1].T)
+            
+            vfields.update({"rec_vy": rec_vy})
+        
+        if solver:
+            v0 = solver.forward(save=True)[dim + 1]
+        else:
+            v0 = self.src_wavefield[isrc]
+        
+        
+        vfields.update({k.name: k for k in v0})
+        vfields.update({'dt': self.model.critical_dt})
+        imaging(**vfields)
+        
+        #TODO: Usar imagingOperator como default, mas abrir a possibilidade para deixar já implementado
+        #no Pylops outros operadores de imageamento, além de permitir que o usuário passe como
+        #parâmetro para o operador pylops seu próprio operador de imageamento Devito. A chamada
+        #do operador de imageamento, nativo do pylops ou recebido do usuário deve usar um decorator
+        #para testar se o operador retorna um tensor de formato válido com dims/dimsd
+    
+    def _imaging_allshots(self, dobs: NDArray, **kwargs):
+        if(hasattr(self, "src_wavefield") and self.src_wavefield):
+            solver = None
+        else:
+            # create geometry for single source
+            geometry = AcquisitionGeometry(
+                self.model,
+                self.geometry.rec_positions,
+                self.geometry.src_positions[0, :],
+                self.geometry.t0,
+                self.geometry.tn,
+                f0=self.geometry.f0,
+                src_type=self.geometry.src_type,
+            )
+            
+            #self._dswap_options
+            solver = IsoElasticWaveSolver(
+                self.model, geometry, space_order=self.space_order
+            )
+        
+        image = VectorFunction(name = "image", grid = self.model.grid)
+
+        
+        nsrc = self.geometry.src_positions.shape[0]
+        for isrc in range(nsrc):
+            imaging, u = self._imaging_operator(self.model, image, self.geometry,
+                            self.model.space_order, self.geometry.dt,
+                            **kwargs)
+            # For each dobs get data equivalent to isrc shot
+            rec_i = [rec[isrc] for rec in dobs]
+
+            # Positioning forward propagation src, if needed
+            if solver:
+                solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
+                
+            self._imaging_oneshot(isrc, rec_i, imaging, solver)
+            
+            if self.save_bwdwavefield:
+                self.bwd_wavefield.append(u)
+        
+        shape = self.model.grid.shape
+        ndim = len(shape)
+        imf = np.zeros((ndim, *shape), dtype=np.float32)
+        for ii, im in enumerate(image):
+            imf[ii] = im.data
+        
+        return imf
+    
+    def rtm(self, recs, **kwargs):
+       return self._imaging_allshots(recs, **kwargs)
+    
     def _grad_oneshot(self, isrc, dobs, solver: IsoElasticWaveSolver):
         """Adjoint gradient modelling for one shot
 
@@ -1021,12 +1186,12 @@ class _ElasticWave(_Wave):
         dim = self.model.dim
         # create boundary data
         rec_vx = self.geometry.rec.copy()
-        rec_vx.data[:] = dobs[1].T[:]
+        rec_vx.data[:] = 1 #dobs[1].T[:]
         rec_vz = self.geometry.rec.copy()
-        rec_vz.data[:] = dobs[-1].T[:]
+        rec_vz.data[:] = 1 #dobs[-1].T[:]
         if dim == 3:
             rec_vy = self.geometry.rec.copy()
-            rec_vy.data[:] = dobs[2].T[:]
+            rec_vy.data[:] = 1 #dobs[2].T[:]
 
         if "rec_p" in self.karguments:
             # If it exists in the karguments, I update the rec_p data field in the karguments.
@@ -1048,14 +1213,17 @@ class _ElasticWave(_Wave):
             u0 = solver.forward(save=True, par=par)[dim + 1]
 
         # adjoint modelling (reverse wavefield plus imaging condition)
-        grad1, grad2, grad3 = solver.jacobian_adjoint(
+        grad1, grad2, grad3, _, u = solver.jacobian_adjoint(
             rec_vx,
             rec_vz,
             u0,
             rec_vy=None if dim == 2 else rec_vy,
             checkpointing=self.checkpointing,
             **self.karguments,
-        )[0:3]
+        )[0:5]
+        
+        if self.save_bwdwavefield:
+            self.bwd_wavefield.append(u)
 
         return grad1, grad2, grad3
 
@@ -1118,6 +1286,7 @@ class _ElasticWave(_Wave):
             # post-process data
             for ii, g in enumerate(grads):
                 mtot[ii] += g.data
+        
         return mtot
 
     def _register_multiplications(self, op_name: str) -> None:
@@ -1161,8 +1330,8 @@ class _ElasticWave(_Wave):
     def _rmatvec(self, x: NDArray) -> NDArray:
         y = self._acoustic_rmatvec(x)
         return y
-
-
+    
+    
 class _ViscoAcousticWave(_Wave):
     """Devito ViscoAcoustic propagator.
 
