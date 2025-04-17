@@ -27,8 +27,8 @@ if devito_message is None:
     from examples.seismic import AcquisitionGeometry, Model, Receiver
     from examples.seismic.acoustic import AcousticWaveSolver
     from examples.seismic.source import TimeAxis
-    from examples.seismic.stiffness import IsoElasticWaveSolver, ISOSeismicModel, elastic_stencil
-    from examples.seismic.utils import PointSource, sources, get_ooc_config
+    from examples.seismic.stiffness import ElasticModel, IsoElasticWaveSolver, elastic_stencil
+    from examples.seismic.utils import PointSource, sources
     from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
 
 
@@ -75,7 +75,6 @@ class _CustomSource(PointSource):
 
 
 class _Wave(LinearOperator):
-
     def _create_geometry(
         self,
         src_x: NDArray,
@@ -341,6 +340,7 @@ class _AcousticWave(_Wave):
         dswap_folder_path: str = None,
         dswap_compression: str = None,
         dswap_compression_value: float | int = None,
+        dswap_verbose: bool = False,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -349,10 +349,14 @@ class _AcousticWave(_Wave):
         is_3d = len(shape) == 3
 
         if is_2d and (rec_y is not None or src_y is not None):
-            raise Exception("Attempting to create a 3D operator using a 2D intended class!")
+            raise Exception(
+                "Attempting to create a 3D operator using a 2D intended class!"
+            )
 
         if is_3d and (rec_y is None or src_y is None):
-            raise Exception("Attempting to create a 2D operator using a 3D intended class!")
+            raise Exception(
+                "Attempting to create a 2D operator using a 3D intended class!"
+            )
 
         # create model
         self._create_model(shape, origin, spacing, vp, space_order, nbl, dt)
@@ -369,6 +373,7 @@ class _AcousticWave(_Wave):
             "dswap_folder_path": dswap_folder_path,
             "dswap_compression": dswap_compression,
             "dswap_compression_value": dswap_compression_value,
+            "dswap_verbose": dswap_verbose,
         }
 
         super().__init__(
@@ -829,6 +834,13 @@ class _ElasticWave(_Wave):
         rec_y: NDArray = None,
         save_wavefield = False,
         save_bwdwavefield = False,
+        dswap: bool = False,
+        dswap_disks: int = 1,
+        dswap_folder: str = None,
+        dswap_folder_path: str = None,
+        dswap_compression: str = None,
+        dswap_compression_value: float | int = None,
+        dswap_verbose: bool = False,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -837,10 +849,14 @@ class _ElasticWave(_Wave):
         is_3d = len(shape) == 3
 
         if is_2d and (rec_y is not None or src_y is not None):
-            raise Exception("Attempting to create a 3D operator using a 2D intended class!")
+            raise Exception(
+                "Attempting to create a 3D operator using a 2D intended class!"
+            )
 
         if is_3d and (rec_y is None or src_y is None):
-            raise Exception("Attempting to create a 2D operator using a 3D intended class!")
+            raise Exception(
+                "Attempting to create a 2D operator using a 3D intended class!"
+            )
 
         # create model
         self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl, dt)
@@ -866,6 +882,16 @@ class _ElasticWave(_Wave):
         # If dim is 3, add the last dimension
         if dim == 3:
             dims = (*dims, self.model.vp.shape[2])
+
+        self._dswap_opt = {
+            "dswap": dswap,
+            "dswap_disks": dswap_disks,
+            "dswap_folder": dswap_folder,
+            "dswap_folder_path": dswap_folder_path,
+            "dswap_compression": dswap_compression,
+            "dswap_compression_value": dswap_compression_value,
+            "dswap_verbose": dswap_verbose,
+        }
 
         super().__init__(
             dtype=np.dtype(dtype),
@@ -908,7 +934,7 @@ class _ElasticWave(_Wave):
 
         """     
         self.space_order = space_order
-        self.model = ISOSeismicModel(
+        self.model = ElasticModel(
             space_order=space_order,
             vp=vp/1000,
             vs=vs/1000,
@@ -1183,6 +1209,9 @@ class _ElasticWave(_Wave):
             Model
 
         """
+        # set disk_swap bool
+        dswap = self._dswap_opt.get("dswap", False)
+
         dim = self.model.dim
         # create boundary data
         rec_vx = self.geometry.rec.copy()
@@ -1210,7 +1239,7 @@ class _ElasticWave(_Wave):
             u0 = self.src_wavefield[isrc]
         else:
             par = self.karguments.get("par")
-            u0 = solver.forward(save=True, par=par)[dim + 1]
+            u0 = solver.forward(save=True if not dswap else False, par=par)[dim + 1]
 
         # adjoint modelling (reverse wavefield plus imaging condition)
         grad1, grad2, grad3, _, u = solver.jacobian_adjoint(
@@ -1273,7 +1302,7 @@ class _ElasticWave(_Wave):
             mtot = np.zeros((3, shape[0], shape[1], shape[2]), dtype=np.float32)
 
         solver = IsoElasticWaveSolver(
-            self.model, geometry, space_order=self.space_order
+            self.model, geometry, space_order=self.space_order, **self._dswap_opt
         )
 
         for isrc in range(nsrc):
@@ -1436,10 +1465,14 @@ class _ViscoAcousticWave(_Wave):
         is_3d = len(shape) == 3
 
         if is_2d and (rec_y is not None or src_y is not None):
-            raise Exception("Attempting to create a 3D operator using a 2D intended class!")
+            raise Exception(
+                "Attempting to create a 3D operator using a 2D intended class!"
+            )
 
         if is_3d and (rec_y is None or src_y is None):
-            raise Exception("Attempting to create a 2D operator using a 3D intended class!")
+            raise Exception(
+                "Attempting to create a 2D operator using a 3D intended class!"
+            )
 
         # create model
         self._create_model(shape, origin, spacing, vp, qp, b, space_order, nbl, dt)
