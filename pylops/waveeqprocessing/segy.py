@@ -127,12 +127,27 @@ class ReadSEGY2D():
             Index of the shot that it will get the data
         """
         with segyio.open(self.segyfile, "r", ignore_geometry=True) as f:
-            retrieved_shot = []
-
             position = self.table[index]['Trace_Position']
             traces_in_shot = self.table[index]['Num_Traces']
+
+            num_samples = len(f.samples)
+            retrieved_shot = np.zeros((1, traces_in_shot, num_samples), dtype=np.float32)
+
             shot_traces = f.trace[position:position + traces_in_shot]
 
-            for trace in shot_traces:
-                retrieved_shot.append(trace)
-        return np.expand_dims(np.array(retrieved_shot), axis=0)
+            for ii, trace in  enumerate(shot_traces):
+                retrieved_shot[:, ii] = trace
+        return retrieved_shot 
+
+    def getOrigin(self):
+        """
+        Get the origin of the survey. It is the minimum value of the source and receiver coordinates
+        """
+        minX = np.inf
+        minY = np.inf
+        for isrc in self.indexes:
+            src_coords, rec_coords = self.getCoords(isrc)
+
+            minX = min(minX, np.min(src_coords[0]), np.min(rec_coords[0]))
+            minY = min(minY, np.min(src_coords[1]), np.min(rec_coords[1]))
+        return minX, minY
