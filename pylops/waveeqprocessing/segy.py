@@ -13,7 +13,7 @@ class ReadSEGY2D():
     def __init__(self, segy_path):
 
         self.segyfile = segy_path
-        self.table = self.make_lookup_table(segy_path)
+        self.table, self.indexes = self.make_lookup_table(segy_path)
         self.isRecVariable = self._isRecVariable()
         self.nsrc = len(self.table)
 
@@ -39,6 +39,7 @@ class ReadSEGY2D():
 
         Made by Oscar Mojica
         '''
+        indexes = []
         lookup_table = {}
         with segyio.open(sgy_file, ignore_geometry=True) as f:
             index = None
@@ -55,6 +56,7 @@ class ReadSEGY2D():
                 # Check to see if we're in a new shot
                 index = header[segyio.TraceField.FieldRecord]
                 if index not in lookup_table.keys():
+                    indexes.append(index)
                     lookup_table[index] = {}
                     lookup_table[index]['filename'] = sgy_file
                     lookup_table[index]['Trace_Position'] = pos_in_file
@@ -66,7 +68,7 @@ class ReadSEGY2D():
                 lookup_table[index]['Receivers'].append((header[segyio.TraceField.GroupX] * scalco, header[segyio.TraceField.GroupY] * scalel))
                 pos_in_file += 1
 
-        return lookup_table
+        return lookup_table, indexes
 
     def getVelocityModel(self, path):
         """
