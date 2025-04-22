@@ -84,7 +84,7 @@ class ReadSEGY2D():
             dims = (len(xl), len(t))
 
         vp = f.trace.raw[:].reshape(dims)
-        return vp
+        return vp, dims
 
     def getSourceCoords(self, index=0):
         src_coords = np.array(self.table[index]['Source'])
