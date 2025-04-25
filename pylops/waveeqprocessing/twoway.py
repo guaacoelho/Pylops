@@ -308,12 +308,6 @@ class _Wave(LinearOperator):
             f0=self.geometry.f0
         )
 
-    def _update_modeldt(self, dt):
-        """
-        Update the time step (dt) in the model
-        """
-        self.model._dt = dt
-
     def _update_op_coords(self):
         """
         Update operator coordinates and dimensions based on SEGY file data.
@@ -333,14 +327,12 @@ class _Wave(LinearOperator):
 
         rx, rz = self.segyReader.getReceiverCoords(id_src)
         sx, sz = self.segyReader.getSourceCoords(id_src)
-        tn = self.segyReader.getTn()
-        dt = self.segyReader.getDt()
+        tn = self.segyReader.getTn() # excluir
 
         nrec = len(rx)
         dims_update = self.segyReader.isRecVariable and nrec != self.geometry.nrec
 
-        self._update_modeldt(dt)
-        self._update_geometry(rx, rz, sx, sz, nrec, tn=tn)
+        self._update_geometry(rx, rz, sx, sz, nrec, tn=tn) # excluir tn como parâmetro
 
         # Check if the number of receivers is variable and differs from the current geometry.
         # If so, update the dimensions to match the new number of receivers for the current shot.
