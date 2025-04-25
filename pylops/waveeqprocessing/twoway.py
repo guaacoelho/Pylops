@@ -17,7 +17,6 @@ from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
 from pylops.waveeqprocessing.segy import  ReadSEGY2D # type: ignore
-from pylops.waveeqprocessing.decorators import update_op_coords_if_needed
 
 devito_message = deps.devito_import("the twoway module")
 
@@ -364,6 +363,7 @@ class _Wave(LinearOperator):
             raise Exception("Can not set shot ID for a operator that doesn't have segyReader")
 
         segyReader.set_shotID(id_src)
+        self._update_op_coords()
 
     @staticmethod
     def _crop_model(m: NDArray, nbl: int) -> NDArray:
@@ -852,10 +852,6 @@ class _AcousticWave(_Wave):
         if op_name == "fwd":
             self._acoustic_matvec = self._fwd_allshots
         self._acoustic_rmatvec = self._bornadj_allshots
-    
-    @update_op_coords_if_needed
-    def __mul__(self, x: Union[float, LinearOperator]) -> LinearOperator:
-        return super().dot(x)
 
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
