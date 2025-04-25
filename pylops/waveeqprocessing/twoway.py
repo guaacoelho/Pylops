@@ -339,6 +339,20 @@ class _Wave(LinearOperator):
         if dims_update: 
             self._update_dimensions(new_dims=self.dims, new_dimsd=(1, nrec, self.geometry.nt))
 
+    def resample(self, data, num):
+        nshots, ntraces, nsteps = data.shape
+
+        time_range = TimeAxis(start=self.geometry.time_axis.start, stop=self.geometry.time_axis.stop, num=nsteps)
+        new_data = np.zeros((nshots, ntraces, num))
+        for shot_id in range(nshots):
+
+            rec = Receiver(name='rec', grid=self.model.grid, npoint=ntraces, time_range=time_range)
+            rec.data[:] = data[shot_id].T
+            rec = rec.resample(num=num)
+
+            new_data[shot_id] = rec.data.T
+        return new_data
+
     def add_args(self, **kwargs):
         self.karguments = kwargs
 
