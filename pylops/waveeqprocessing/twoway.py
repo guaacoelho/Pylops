@@ -135,7 +135,7 @@ class _Wave(LinearOperator):
             t0,
             tn,
             src_type=src_type,
-            f0=f0
+            f0=None if f0 is None else f0 * 1e-3
         )
 
     def updatesrc(self, wav):
@@ -936,8 +936,8 @@ class _ElasticWave(_Wave):
         self.space_order = space_order
         self.model = ElasticModel(
             space_order=space_order,
-            vp=vp/1000,
-            vs=vs/1000,
+            vp=vp / 1000,
+            vs=vs / 1000,
             rho=rho,
             origin=origin,
             shape=shape,
@@ -1281,12 +1281,12 @@ class _ElasticWave(_Wave):
         dim = self.model.dim
         # create boundary data
         rec_vx = self.geometry.rec.copy()
-        rec_vx.data[:] = 1 #dobs[1].T[:]
+        rec_vx.data[:] = dobs[1].T[:]
         rec_vz = self.geometry.rec.copy()
-        rec_vz.data[:] = 1 #dobs[-1].T[:]
+        rec_vz.data[:] = dobs[-1].T[:]
         if dim == 3:
             rec_vy = self.geometry.rec.copy()
-            rec_vy.data[:] = 1 #dobs[2].T[:]
+            rec_vy.data[:] = dobs[2].T[:]
 
         if "rec_p" in self.karguments:
             # If it exists in the karguments, I update the rec_p data field in the karguments.
