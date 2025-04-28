@@ -1092,12 +1092,6 @@ class _ElasticWave(_Wave):
 
         eqn = elastic_stencil(model, u, sig, forward=False, par='vp-vs-rho')
 
-        u[0].data[0] = 1
-        u[0].data[1] = 1
-        u[1].data[0] = 1
-        u[1].data[1] = 1
-        u[2].data[0] = 1
-        u[2].data[1] = 1
         
         dt = dt_ref
         b = 1./model.rho
