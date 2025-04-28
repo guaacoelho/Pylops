@@ -135,7 +135,7 @@ class _Wave(LinearOperator):
             t0,
             tn,
             src_type=src_type,
-            f0=None if f0 is None else f0 * 1e-3
+            f0=None if f0 is None else f0 * 1e-3,
         )
 
     def updatesrc(self, wav):
@@ -932,7 +932,7 @@ class _ElasticWave(_Wave):
         nbl : :obj:`int`, optional
             Number ordering of samples in absorbing boundaries
 
-        """     
+        """
         self.space_order = space_order
         self.model = ElasticModel(
             space_order=space_order,
@@ -1425,8 +1425,8 @@ class _ElasticWave(_Wave):
     def _rmatvec(self, x: NDArray) -> NDArray:
         y = self._acoustic_rmatvec(x)
         return y
-    
-    
+
+
 class _ViscoAcousticWave(_Wave):
     """Devito ViscoAcoustic propagator.
 
