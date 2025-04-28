@@ -943,6 +943,7 @@ class _ElasticWave(_Wave):
             shape=shape,
             dtype=np.float32,
             spacing=spacing,
+            bcs="damp",
             nbl=nbl,
             dt=dt,
         )
