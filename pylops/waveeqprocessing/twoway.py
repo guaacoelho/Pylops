@@ -1034,7 +1034,7 @@ class _ElasticWave(_Wave):
 
         # create solver
         solver = IsoElasticWaveSolver(
-            self.model, geometry, space_order=self.space_order
+            self.model, geometry, space_order=self.space_order, **self._dswap_opt
         )
 
         for isrc in range(nsrc):
