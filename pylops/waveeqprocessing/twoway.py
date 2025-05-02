@@ -307,7 +307,7 @@ class _Wave(LinearOperator):
             f0=self.geometry.f0
         )
 
-    def _update_op_coords(self):
+    def _update_op_coords(self, id_src, relative_coords=False):
         """
         Update operator coordinates and dimensions based on SEGY file data.
 
@@ -319,13 +319,13 @@ class _Wave(LinearOperator):
         Raises:
             Exception: If the SEGY file is used but the shot index (`id_src`) is not defined.
         """
-        id_src = getattr(self.segyReader, "id_src", None)
+        if relative_coords:
+            src_coords, rec_coords = self.segyReader.getRelativeCoords(id_src)
+        else:
+            src_coords, rec_coords = self.segyReader.getCoords(id_src)
+        rx, rz = rec_coords
+        sx, sz = src_coords
 
-        if id_src is None:
-            raise Exception("This operator uses a SEGY file, but the shot index was not defined.")
-
-        rx, rz = self.segyReader.getReceiverCoords(id_src)
-        sx, sz = self.segyReader.getSourceCoords(id_src)
         tn = self.segyReader.getTn() # excluir
 
         nrec = len(rx)
@@ -335,7 +335,7 @@ class _Wave(LinearOperator):
 
         # Check if the number of receivers is variable and differs from the current geometry.
         # If so, update the dimensions to match the new number of receivers for the current shot.
-        if dims_update: 
+        if dims_update:
             self._update_dimensions(new_dims=self.dims, new_dimsd=(1, nrec, self.geometry.nt))
 
     def resample(self, data, num):
@@ -355,15 +355,34 @@ class _Wave(LinearOperator):
     def add_args(self, **kwargs):
         self.karguments = kwargs
 
-    def set_shotID(self, id_src):
-        """Set the shot ID for the operator"""
+    def set_shotID(self, id_src, relative_coords=False):
+        """
+        Set the ID for the shot that will be executed by the operator.
+
+        This method updates the operator's internal state to process a specific 
+            raise Exception("Can not set shot ID for an operator that doesn't have segyReader")
+        for the given shot ID and updates the geometry accordingly.
+
+        Parameters
+        ----------
+        id_src : int
+            The ID of the shot to be executed. This corresponds to the shot index 
+            in the SEGY file.
+        relative_coords : bool, optional
+            If True, the coordinates will be treated as relative to the model's 
+            origin. If False, the coordinates are treated as absolute. Default is False.
+
+        Raises
+        ------
+        Exception
+            If the operator does not have a SEGY reader or if the shot ID is invalid.
+        """
         segyReader = getattr(self, "segyReader", None)
 
         if not segyReader:
             raise Exception("Can not set shot ID for a operator that doesn't have segyReader")
 
-        segyReader.set_shotID(id_src)
-        self._update_op_coords()
+        self._update_op_coords(id_src, relative_coords=relative_coords)
 
     @staticmethod
     def _crop_model(m: NDArray, nbl: int) -> NDArray:

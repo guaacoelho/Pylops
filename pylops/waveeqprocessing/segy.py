@@ -1,7 +1,10 @@
 import segyio
 
 import numpy as np
+from scipy.spatial import distance  
+
 from pylops.basicoperators.vstack import VStack
+
 # from pylops.waveeqprocessing.twoway import  AcousticWave2D
 
 
@@ -14,11 +17,9 @@ class ReadSEGY2D():
 
         self.segyfile = segy_path
         self.table, self.indexes = self.make_lookup_table(segy_path)
+        self.relative_distances = self._generate_relative_distances()
         self.isRecVariable = self._isRecVariable()
         self.nsrc = len(self.table)
-
-    def set_shotID(self, id_src):
-        self.id_src = id_src
 
     def _isRecVariable(self):
         """
@@ -61,14 +62,32 @@ class ReadSEGY2D():
                     lookup_table[index]['filename'] = sgy_file
                     lookup_table[index]['Trace_Position'] = pos_in_file
                     lookup_table[index]['Num_Traces'] = 1
-                    lookup_table[index]['Source'] = (header[segyio.TraceField.SourceX] * scalco, header[segyio.TraceField.SourceY] * scalel)
+                    lookup_table[index]['Source'] = (header[segyio.TraceField.SourceX] * scalco, header[segyio.TraceField.SourceY] * scalco)
                     lookup_table[index]['Receivers'] = []
                 else:  # Not in a new shot, so increase the number of traces in the shot by 1
                     lookup_table[index]['Num_Traces'] += 1
-                lookup_table[index]['Receivers'].append((header[segyio.TraceField.GroupX] * scalco, header[segyio.TraceField.GroupY] * scalel))
+                lookup_table[index]['Receivers'].append((header[segyio.TraceField.GroupX] * scalco, header[segyio.TraceField.GroupY] * scalco))
                 pos_in_file += 1
 
         return lookup_table, indexes
+
+    def _generate_relative_distances(self):
+        # Retorna o menor valor de X e o valor de Y correspondente a esse receptor ou fonte
+        minCoords = self.getMinXWithY()
+
+        relative_dist = {minCoords[0]:0.}
+        for ii in self.indexes:
+            # pega as coordenadas
+            src_coords, rec_coords = self.getCoords(ii)
+            x_all = np.concatenate((rec_coords[0], src_coords[0]))
+            y_all = np.concatenate((rec_coords[1], src_coords[1]))
+
+            for coordx, coordy in zip(x_all, y_all):
+                if coordx in relative_dist:
+                    continue
+                coords = (coordx, coordy)
+                relative_dist[coordx] = distance.euclidean(coords, minCoords)
+        return relative_dist
 
     def getVelocityModel(self, path):
         """
@@ -106,6 +125,18 @@ class ReadSEGY2D():
 
         return src_coords, rec_coords
 
+    def getRelativeCoords(self, index):
+        src_coords, rec_coords = self.getCoords(index=index)
+
+        new_rx = np.zeros((rec_coords[0].size,))
+        new_rz = np.zeros((rec_coords[1].size,))
+        for idx, coord in enumerate(rec_coords[0]):
+            new_rx[idx] = self.relative_distances[coord]
+        
+        new_sx = np.array(self.relative_distances[src_coords[0][0]])
+        new_sz = np.zeros((1,))
+        return (new_sx, new_sz), (new_rx, new_rz)
+
     def getTn(self):
         with segyio.open(self.segyfile, "r", ignore_geometry=True) as f:
             num_samples = len(f.samples)
@@ -139,7 +170,7 @@ class ReadSEGY2D():
                 retrieved_shot[:, ii] = trace
         return retrieved_shot 
 
-    def getOrigin(self):
+    def getMinCoords(self):
         """
         Get the origin of the survey. It is the minimum value of the source and receiver coordinates
         """
@@ -150,4 +181,31 @@ class ReadSEGY2D():
 
             minX = min(minX, np.min(src_coords[0]), np.min(rec_coords[0]))
             minY = min(minY, np.min(src_coords[1]), np.min(rec_coords[1]))
+
         return minX, minY
+    
+    def getMinXWithY(self):
+        """
+        Retorna o menor valor de X entre fontes e receptores,
+        junto com o valor de Y correspondente (mesmo índice).
+        """
+        minX = np.inf
+        correspondingY = None
+
+        for isrc in self.indexes:
+            src_coords, rec_coords = self.getCoords(isrc)
+
+            # Combina fontes e receptores
+            x_all = np.concatenate((src_coords[0], rec_coords[0]))
+            y_all = np.concatenate((src_coords[1], rec_coords[1]))
+
+            # Encontra o menor X e o índice correspondente
+            local_min_idx = np.argmin(x_all)
+            local_minX = x_all[local_min_idx]
+
+            # Se for menor que o atual mínimo, atualiza
+            if local_minX < minX:
+                minX = local_minX
+                correspondingY = y_all[local_min_idx]
+
+        return minX, correspondingY
