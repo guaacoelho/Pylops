@@ -11,6 +11,7 @@ from copy import deepcopy
 from typing import Tuple, Union
 
 import numpy as np
+import logging
 
 from pylops import LinearOperator
 from pylops.utils import deps
@@ -21,7 +22,7 @@ devito_message = deps.devito_import("the twoway module")
 
 if devito_message is None:
     from devito import (Function, VectorFunction, VectorTimeFunction,
-                        TensorTimeFunction, Operator, Eq)
+                        TensorTimeFunction, Operator, Eq, DiskSwapConfig)
     from devito.builtins import initialize_function
 
     from examples.seismic import AcquisitionGeometry, Model, Receiver
@@ -337,7 +338,7 @@ class _AcousticWave(_Wave):
         dswap: bool = False,
         dswap_disks: int = 1,
         dswap_folder: str = None,
-        dswap_folder_path: str = None,
+        dswap_path: str = None,
         dswap_compression: str = None,
         dswap_compression_value: float | int = None,
         dswap_verbose: bool = False,
@@ -370,7 +371,7 @@ class _AcousticWave(_Wave):
             "dswap": dswap,
             "dswap_disks": dswap_disks,
             "dswap_folder": dswap_folder,
-            "dswap_folder_path": dswap_folder_path,
+            "dswap_path": dswap_path,
             "dswap_compression": dswap_compression,
             "dswap_compression_value": dswap_compression_value,
             "dswap_verbose": dswap_verbose,
@@ -837,14 +838,17 @@ class _ElasticWave(_Wave):
         dswap: bool = False,
         dswap_disks: int = 1,
         dswap_folder: str = None,
-        dswap_folder_path: str = None,
+        dswap_path: str = None,
         dswap_compression: str = None,
         dswap_compression_value: float | int = None,
         dswap_verbose: bool = False,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
-
+        
+        init_logger = logging.getLogger("init_logger")
+        init_logger.setLevel(logging.WARNING)
+        
         is_2d = len(shape) == 2
         is_3d = len(shape) == 3
 
@@ -868,12 +872,17 @@ class _ElasticWave(_Wave):
         self.karguments = {}
         dim = self.model.dim
         
-        self.save_wavefield = save_wavefield
-        if save_wavefield:
+        if dswap and (save_wavefield or save_bwdwavefield):
+            init_logger.warning(
+                "Disk swap is incompatible with wave saving. Disabling wave saving"
+            )
+        
+        self.save_wavefield = save_wavefield if (not dswap) else False
+        if self.save_wavefield:
             self.src_wavefield=[]
             
-        self.save_bwdwavefield = save_bwdwavefield
-        if save_bwdwavefield:
+        self.save_bwdwavefield = save_bwdwavefield if (not dswap) else False
+        if self.save_bwdwavefield:
             self.bwd_wavefield=[]
             
         n_input = 3
@@ -887,7 +896,7 @@ class _ElasticWave(_Wave):
             "dswap": dswap,
             "dswap_disks": dswap_disks,
             "dswap_folder": dswap_folder,
-            "dswap_folder_path": dswap_folder_path,
+            "dswap_path": dswap_path,
             "dswap_compression": dswap_compression,
             "dswap_compression_value": dswap_compression_value,
             "dswap_verbose": dswap_verbose,
@@ -1034,7 +1043,7 @@ class _ElasticWave(_Wave):
 
         # create solver
         solver = IsoElasticWaveSolver(
-            self.model, geometry, space_order=self.space_order, **self._dswap_opt
+            self.model, geometry, space_order=self.space_order
         )
 
         for isrc in range(nsrc):
@@ -1054,8 +1063,6 @@ class _ElasticWave(_Wave):
         geometry: AcquisitionGeometry,
         space_order: int,
         dt_ref: float,
-        to_disk: bool = None,
-        **kwargs,
     ) -> Operator:
         """Imaging operator built using Devito
 
@@ -1071,8 +1078,6 @@ class _ElasticWave(_Wave):
             Spatial ordering of FD stencil
         dt_ref : :obj:`float`
             Time discretization step
-        to_disk : :obj:`bool`, optional
-            Disk offload flag (dswap)
         Returns
         -------
         imop : :obj:`Operator`
@@ -1082,8 +1087,10 @@ class _ElasticWave(_Wave):
             
         """
         # Define the wavefield with the size of the model and the time dimension
+        dswap = self._dswap_opt["dswap"]
+        
         v = VectorTimeFunction(name='v', grid=model.grid,
-                            save=geometry.nt if not to_disk else None,
+                            save=geometry.nt if not dswap else None,
                             space_order=space_order, time_order=1)
 
         u = VectorTimeFunction(name='u', grid=model.grid, space_order=space_order,
@@ -1126,8 +1133,25 @@ class _ElasticWave(_Wave):
 
         if model.grid.dim == 3:
             img_update += [Eq(img[1], img[1] + v[1] * u[1])]
+        
+        opt = {}
+        if dswap:
+            dconfig = DiskSwapConfig(
+                functions=[v],
+                mode = "read",
+                path=self._dswap_opt["dswap_path"],
+                folder=self._dswap_opt["dswap_folder"],
+                verbose=self._dswap_opt["dswap_verbose"]
+            )
             
-        imop = Operator(eqn + rec_expr + img_update, subs=model.spacing_map, name='Imaging', **kwargs)
+            opt.update({"opt": ('advanced', {'disk-swap': dconfig})})
+        
+        imop = Operator(
+            eqn + rec_expr + img_update,
+            subs=model.spacing_map,
+            name='Imaging',
+            **opt
+        )
         return imop, u
     
     def _imaging_oneshot(
@@ -1175,7 +1199,7 @@ class _ElasticWave(_Wave):
             vfields.update({"rec_vy": rec_vy})
         
         if solver:
-            v0 = solver.forward(save=True)[dim + 1]
+            v0 = solver.forward(save=True if not self._dswap_opt["dswap"] else False)[dim + 1]
         else:
             v0 = self.src_wavefield[isrc]
         
@@ -1225,7 +1249,7 @@ class _ElasticWave(_Wave):
             )
             
             solver = IsoElasticWaveSolver(
-                self.model, geometry, space_order=self.space_order
+                self.model, geometry, space_order=self.space_order, **self._dswap_opt
             )
         
         image = VectorFunction(name = "image", grid = self.model.grid)
