@@ -16,7 +16,7 @@ from pylops import LinearOperator
 from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
-from pylops.waveeqprocessing.segy import  ReadSEGY2D # type: ignore
+from pylops.waveeqprocessing.segy import ReadSEGY2D  # type: ignore
 
 devito_message = deps.devito_import("the twoway module")
 
@@ -283,7 +283,7 @@ class _Wave(LinearOperator):
         Notes
         -----
         This method updates the `geometry` attribute of the object by creating
-        a new `AcquisitionGeometry` instance with the provided receiver and 
+        a new `AcquisitionGeometry` instance with the provided receiver and
         source positions, as well as the updated final recording time.
 
         For now, it only works for 2D operatores.
@@ -329,7 +329,7 @@ class _Wave(LinearOperator):
         nrec = len(rx)
         dims_update = self.segyReader.isRecVariable and nrec != self.geometry.nrec
 
-        self._update_geometry(rx, rz, sx, sz, nrec) # excluir tn como parâmetro
+        self._update_geometry(rx, rz, sx, sz, nrec)
 
         # Check if the number of receivers is variable and differs from the current geometry.
         # If so, update the dimensions to match the new number of receivers for the current shot.
@@ -357,17 +357,17 @@ class _Wave(LinearOperator):
         """
         Set the ID for the shot that will be executed by the operator.
 
-        This method updates the operator's internal state to process a specific 
+        This method updates the operator's internal state to process a specific
             raise Exception("Can not set shot ID for an operator that doesn't have segyReader")
         for the given shot ID and updates the geometry accordingly.
 
         Parameters
         ----------
         id_src : int
-            The ID of the shot to be executed. This corresponds to the shot index 
+            The ID of the shot to be executed. This corresponds to the shot index
             in the SEGY file.
         relative_coords : bool, optional
-            If True, the coordinates will be treated as relative to the model's 
+            If True, the coordinates will be treated as relative to the model's
             origin. If False, the coordinates are treated as absolute. Default is False.
 
         Raises

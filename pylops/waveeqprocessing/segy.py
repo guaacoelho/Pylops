@@ -1,11 +1,7 @@
 import segyio
 
 import numpy as np
-from scipy.spatial import distance  
-
-from pylops.basicoperators.vstack import VStack
-
-# from pylops.waveeqprocessing.twoway import  AcousticWave2D
+from scipy.spatial import distance
 
 
 __all__ = ['ReadSEGY2D']
@@ -50,10 +46,11 @@ class ReadSEGY2D():
                     scalco = abs(1. / header[segyio.TraceField.SourceGroupScalar])
                 else:
                     scalco = header[segyio.TraceField.SourceGroupScalar]
-                if int(header[segyio.TraceField.ElevationScalar]) < 0:
-                    scalel = abs(1. / header[segyio.TraceField.ElevationScalar])
-                else:
-                    scalel = header[segyio.TraceField.ElevationScalar]
+                # Esses comentários são temporários, scalel voltará a ser utilizado
+                # if int(header[segyio.TraceField.ElevationScalar]) < 0:
+                #     scalel = abs(1. / header[segyio.TraceField.ElevationScalar])
+                # else:
+                #     scalel = header[segyio.TraceField.ElevationScalar]
                 # Check to see if we're in a new shot
                 index = header[segyio.TraceField.FieldRecord]
                 if index not in lookup_table.keys():
@@ -75,7 +72,7 @@ class ReadSEGY2D():
         # Retorna o menor valor de X e o valor de Y correspondente a esse receptor ou fonte
         minCoords = self.getMinXWithY()
 
-        relative_dist = {minCoords[0]:0.}
+        relative_dist = {minCoords[0]: 0.}
         for ii in self.indexes:
             # pega as coordenadas
             src_coords, rec_coords = self.getCoords(ii)
@@ -132,7 +129,7 @@ class ReadSEGY2D():
         new_rz = np.zeros((rec_coords[1].size,))
         for idx, coord in enumerate(rec_coords[0]):
             new_rx[idx] = self.relative_distances[coord]
-        
+
         new_sx = np.array(self.relative_distances[src_coords[0][0]])
         new_sz = np.zeros((1,))
         return (new_sx, new_sz), (new_rx, new_rz)
@@ -166,9 +163,9 @@ class ReadSEGY2D():
 
             shot_traces = f.trace[position:position + traces_in_shot]
 
-            for ii, trace in  enumerate(shot_traces):
+            for ii, trace in enumerate(shot_traces):
                 retrieved_shot[:, ii] = trace
-        return retrieved_shot 
+        return retrieved_shot
 
     def getMinCoords(self):
         """
@@ -183,7 +180,7 @@ class ReadSEGY2D():
             minY = min(minY, np.min(src_coords[1]), np.min(rec_coords[1]))
 
         return minX, minY
-    
+
     def getMinXWithY(self):
         """
         Retorna o menor valor de X entre fontes e receptores,
