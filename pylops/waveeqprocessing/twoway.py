@@ -261,7 +261,7 @@ class _Wave(LinearOperator):
         self.dims = new_dims
         self.dimsd = new_dimsd
 
-    def _update_geometry(self, rx, rz, sx, sz, nrecs, tn):
+    def _update_geometry(self, rx, rz, sx, sz, nrecs):
         """
         Update the geometry with new receiver and source positions.
 
@@ -302,7 +302,7 @@ class _Wave(LinearOperator):
             new_rec_positions,
             new_src_positions,
             self.geometry.t0,
-            tn,
+            self.geometry.tn,
             src_type=self.geometry.src_type,
             f0=self.geometry.f0
         )
@@ -326,12 +326,10 @@ class _Wave(LinearOperator):
         rx, rz = rec_coords
         sx, sz = src_coords
 
-        tn = self.segyReader.getTn() # excluir
-
         nrec = len(rx)
         dims_update = self.segyReader.isRecVariable and nrec != self.geometry.nrec
 
-        self._update_geometry(rx, rz, sx, sz, nrec, tn=tn) # excluir tn como parâmetro
+        self._update_geometry(rx, rz, sx, sz, nrec) # excluir tn como parâmetro
 
         # Check if the number of receivers is variable and differs from the current geometry.
         # If so, update the dimensions to match the new number of receivers for the current shot.
@@ -342,7 +340,7 @@ class _Wave(LinearOperator):
         nshots, ntraces, nsteps = data.shape
 
         time_range = TimeAxis(start=self.geometry.time_axis.start, stop=self.geometry.time_axis.stop, num=nsteps)
-        new_data = np.zeros((nshots, ntraces, num))
+        new_data = np.zeros((nshots, ntraces, num), dtype=np.float32)
         for shot_id in range(nshots):
 
             rec = Receiver(name='rec', grid=self.model.grid, npoint=ntraces, time_range=time_range)
