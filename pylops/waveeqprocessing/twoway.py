@@ -327,14 +327,13 @@ class _Wave(LinearOperator):
         sx, sz = src_coords
 
         nrec = len(rx)
-        dims_update = self.segyReader.isRecVariable and nrec != self.geometry.nrec
-
-        self._update_geometry(rx, rz, sx, sz, nrec)
 
         # Check if the number of receivers is variable and differs from the current geometry.
         # If so, update the dimensions to match the new number of receivers for the current shot.
-        if dims_update:
+        if nrec != self.geometry.nrec:
             self._update_dimensions(new_dims=self.dims, new_dimsd=(1, nrec, self.geometry.nt))
+
+        self._update_geometry(rx, rz, sx, sz, nrec)
 
     def resample(self, data, num):
         nshots, ntraces, nsteps = data.shape
