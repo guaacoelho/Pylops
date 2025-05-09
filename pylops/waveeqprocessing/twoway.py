@@ -381,6 +381,10 @@ class _Wave(LinearOperator):
 
         self._update_op_coords(id_src, relative_coords=relative_coords)
 
+    @property
+    def vp(self):
+        return self._crop_model(self.model.vp.data, self.model.nbl)
+
     @staticmethod
     def _crop_model(m: NDArray, nbl: int) -> NDArray:
         """Remove absorbing boundaries from model"""
