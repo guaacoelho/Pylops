@@ -978,7 +978,6 @@ class _ElasticWave(_Wave):
         src_y: NDArray = None,
         rec_y: NDArray = None,
         save_wavefield = False,
-        save_bwdwavefield = False,
         dswap: bool = False,
         dswap_disks: int = 1,
         dswap_folder: str = None,
@@ -1016,7 +1015,7 @@ class _ElasticWave(_Wave):
         self.karguments = {}
         dim = self.model.dim
         
-        if dswap and (save_wavefield or save_bwdwavefield):
+        if dswap and save_wavefield:
             init_logger.warning(
                 "Disk swap is incompatible with wave saving. Disabling wave saving"
             )
@@ -1024,10 +1023,6 @@ class _ElasticWave(_Wave):
         self.save_wavefield = save_wavefield if (not dswap) else False
         if self.save_wavefield:
             self.src_wavefield=[]
-            
-        self.save_bwdwavefield = save_bwdwavefield if (not dswap) else False
-        if self.save_bwdwavefield:
-            self.bwd_wavefield=[]
             
         n_input = 3
         num_outs = dim + 1
@@ -1290,13 +1285,12 @@ class _ElasticWave(_Wave):
             
             opt.update({"opt": ('advanced', {'disk-swap': dconfig})})
         
-        imop = Operator(
+        return Operator(
             eqn + rec_expr + img_update,
             subs=model.spacing_map,
             name='Imaging',
             **opt
         )
-        return imop, u
     
     def _imaging_oneshot(
         self,
@@ -1400,7 +1394,7 @@ class _ElasticWave(_Wave):
         
         nsrc = self.geometry.src_positions.shape[0]
         for isrc in range(nsrc):
-            imaging, u = self._imaging_operator(self.model, image, self.geometry,
+            imaging = self._imaging_operator(self.model, image, self.geometry,
                             self.model.space_order, self.geometry.dt,
                             **kwargs)
             # For each dobs get data equivalent to isrc shot
@@ -1411,9 +1405,6 @@ class _ElasticWave(_Wave):
                 solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
                 
             self._imaging_oneshot(isrc, rec_i, imaging, solver)
-            
-            if self.save_bwdwavefield:
-                self.bwd_wavefield.append(u)
         
         shape = self.model.grid.shape
         ndim = len(shape)
@@ -1476,19 +1467,16 @@ class _ElasticWave(_Wave):
             par = self.karguments.get("par")
             u0 = solver.forward(save=True if not dswap else False, par=par)[dim + 1]
 
-        # adjoint modelling (reverse wavefield plus imaging condition)
-        grad1, grad2, grad3, _, u = solver.jacobian_adjoint(
+        # adjoint modelling (reverse wavefield)
+        grad1, grad2, grad3 = solver.jacobian_adjoint(
             rec_vx,
             rec_vz,
             u0,
             rec_vy=None if dim == 2 else rec_vy,
             checkpointing=self.checkpointing,
             **self.karguments,
-        )[0:5]
+        )[0:3]
         
-        if self.save_bwdwavefield:
-            self.bwd_wavefield.append(u)
-
         return grad1, grad2, grad3
 
     def _grad_allshots(self, dobs: NDArray) -> NDArray:
