@@ -16,7 +16,8 @@ from pylops import LinearOperator
 from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
-from pylops.waveeqprocessing.segy import ReadSEGY2D  # type: ignore
+from pylops.waveeqprocessing.segy import ReadSEGY2D
+from pylops.waveeqprocessing._propertiesmixin import PhysicalPropertiesMixin
 
 devito_message = deps.devito_import("the twoway module")
 
@@ -74,7 +75,7 @@ class _CustomSource(PointSource):
         return self.wav
 
 
-class _Wave(LinearOperator):
+class _Wave(LinearOperator, PhysicalPropertiesMixin):
     def _create_geometry(
         self,
         src_x: NDArray,
@@ -380,10 +381,6 @@ class _Wave(LinearOperator):
             raise Exception("Can not set shot ID for a operator that doesn't have segyReader")
 
         self._update_op_coords(id_src, relative_coords=relative_coords)
-
-    @property
-    def vp(self):
-        return self._crop_model(self.model.vp.data, self.model.nbl)
 
     @staticmethod
     def _crop_model(m: NDArray, nbl: int) -> NDArray:
