@@ -16,7 +16,8 @@ from pylops import LinearOperator
 from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
-from pylops.waveeqprocessing.segy import ReadSEGY2D  # type: ignore
+from pylops.waveeqprocessing.segy import ReadSEGY2D
+from pylops.waveeqprocessing._propertiesmixin import PhysicalPropertiesMixin
 
 devito_message = deps.devito_import("the twoway module")
 
@@ -74,7 +75,7 @@ class _CustomSource(PointSource):
         return self.wav
 
 
-class _Wave(LinearOperator):
+class _Wave(LinearOperator, PhysicalPropertiesMixin):
     def _create_geometry(
         self,
         src_x: NDArray,
@@ -380,10 +381,6 @@ class _Wave(LinearOperator):
             raise Exception("Can not set shot ID for a operator that doesn't have segyReader")
 
         self._update_op_coords(id_src, relative_coords=relative_coords)
-
-    @property
-    def vp(self):
-        return self._crop_model(self.model.vp.data, self.model.nbl)
 
     @staticmethod
     def _crop_model(m: NDArray, nbl: int) -> NDArray:
@@ -979,6 +976,7 @@ class _ElasticWave(_Wave):
         dswap_compression: str = None,
         dswap_compression_value: float | int = None,
         dswap_verbose: bool = False,
+        **kwargs,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -997,7 +995,7 @@ class _ElasticWave(_Wave):
             )
 
         # create model
-        self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl, dt)
+        self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl, dt, **kwargs)
         self._create_geometry(
             src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0
         )
@@ -1013,6 +1011,14 @@ class _ElasticWave(_Wave):
         if dim == 3:
             dims = (*dims, self.model.vp.shape[2])
 
+        super().__init__(
+            dtype=np.dtype(dtype),
+            dims=dims,
+            dimsd=(num_outs, len(src_x), len(rec_x), self.geometry.nt),
+            explicit=False,
+            name=name,
+        )
+
         self._dswap_opt = {
             "dswap": dswap,
             "dswap_disks": dswap_disks,
@@ -1022,14 +1028,6 @@ class _ElasticWave(_Wave):
             "dswap_compression_value": dswap_compression_value,
             "dswap_verbose": dswap_verbose,
         }
-
-        super().__init__(
-            dtype=np.dtype(dtype),
-            dims=dims,
-            dimsd=(num_outs, len(src_x), len(rec_x), self.geometry.nt),
-            explicit=False,
-            name=name,
-        )
 
         self._register_multiplications(op_name)
 
@@ -1044,6 +1042,7 @@ class _ElasticWave(_Wave):
         space_order: int = 6,
         nbl: int = 20,
         dt: int = None,
+        **kwargs,
     ) -> None:
         """Create model
 
@@ -1063,6 +1062,11 @@ class _ElasticWave(_Wave):
             Number ordering of samples in absorbing boundaries
 
         """
+        parameters_list = ['epsilon', 'delta', 'phi', 'gamma', 'C11', 'C22', 'C33', 'C44',
+                           'C55', 'C66', 'C12', 'C21', 'C13', 'C31', 'C23', 'C32']
+
+        physical_parameters = {arg: value for arg, value in kwargs.items() if arg in parameters_list}
+
         self.space_order = space_order
         self.model = ElasticModel(
             space_order=space_order,
@@ -1076,6 +1080,7 @@ class _ElasticWave(_Wave):
             nbl=nbl,
             bcs="damp",
             dt=dt,
+            **physical_parameters,
         )
 
     def _fwd_oneshot(self, solver: IsoElasticWaveSolver, v: NDArray) -> NDArray:
