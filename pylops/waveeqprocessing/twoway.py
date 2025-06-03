@@ -29,11 +29,7 @@ if devito_message is None:
     from examples.seismic import AcquisitionGeometry, Model, Receiver
     from examples.seismic.acoustic import AcousticWaveSolver
     from examples.seismic.source import TimeAxis
-<<<<<<< HEAD
     from examples.seismic.stiffness import ElasticModel, IsoElasticWaveSolver, elastic_stencil
-=======
-    from examples.seismic.stiffness import IsoElasticWaveSolver, ElasticModel
->>>>>>> e127b331f2c046ac26951e3397c3b05641bb744a
     from examples.seismic.utils import PointSource, sources
     from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
 
