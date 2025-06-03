@@ -16,6 +16,8 @@ from pylops import LinearOperator
 from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
+from pylops.waveeqprocessing.segy import ReadSEGY2D
+from pylops.waveeqprocessing._propertiesmixin import PhysicalPropertiesMixin
 
 devito_message = deps.devito_import("the twoway module")
 
@@ -27,7 +29,11 @@ if devito_message is None:
     from examples.seismic import AcquisitionGeometry, Model, Receiver
     from examples.seismic.acoustic import AcousticWaveSolver
     from examples.seismic.source import TimeAxis
+<<<<<<< HEAD
     from examples.seismic.stiffness import ElasticModel, IsoElasticWaveSolver, elastic_stencil
+=======
+    from examples.seismic.stiffness import IsoElasticWaveSolver, ElasticModel
+>>>>>>> e127b331f2c046ac26951e3397c3b05641bb744a
     from examples.seismic.utils import PointSource, sources
     from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
 
@@ -74,7 +80,7 @@ class _CustomSource(PointSource):
         return self.wav
 
 
-class _Wave(LinearOperator):
+class _Wave(LinearOperator, PhysicalPropertiesMixin):
     def _create_geometry(
         self,
         src_x: NDArray,
@@ -240,11 +246,149 @@ class _Wave(LinearOperator):
             t0=t0,
         )
 
+    def _update_dimensions(self, new_dims, new_dimsd):
+        """
+        Update the dimensions and shape of the object.
+
+        Parameters:
+        -----------
+        new_dims : tuple
+            The new value of dims.
+        new_dimsd : tuple
+            The new value of dimsd.
+
+        """
+
+        del self.dims
+        del self.dimsd
+
+        self.shape = (np.prod(new_dimsd), np.prod(new_dims))
+
+        self.dims = new_dims
+        self.dimsd = new_dimsd
+
+    def _update_geometry(self, rx, rz, sx, sz, nrecs):
+        """
+        Update the geometry with new receiver and source positions.
+
+        Parameters
+        ----------
+        rx : array-like
+            Array containing the x-coordinates of the receivers.
+        rz : array-like
+            Array containing the z-coordinates of the receivers.
+        sx : float
+            x-coordinate of the source.
+        sz : float
+            z-coordinate of the source.
+        nrecs : int
+            Number of receivers.
+        tn : float
+            Final recording time.
+
+        Notes
+        -----
+        This method updates the `geometry` attribute of the object by creating
+        a new `AcquisitionGeometry` instance with the provided receiver and
+        source positions, as well as the updated final recording time.
+
+        For now, it only works for 2D operatores.
+        """
+
+        new_rec_positions = np.zeros((nrecs, 2))
+        new_rec_positions[:, 0] = rx
+        new_rec_positions[:, -1] = rz
+
+        new_src_positions = np.zeros((1, 2))
+        new_src_positions[:, 0] = sx
+        new_src_positions[:, -1] = sz
+
+        self.geometry = AcquisitionGeometry(
+            self.model,
+            new_rec_positions,
+            new_src_positions,
+            self.geometry.t0,
+            self.geometry.tn,
+            src_type=self.geometry.src_type,
+            f0=self.geometry.f0
+        )
+
+    def _update_op_coords(self, id_src, relative_coords=False):
+        """
+        Update operator coordinates and dimensions based on SEGY file data.
+
+        This method retrieves the source and receiver coordinates, time sampling
+        information, and other relevant parameters from the SEGY file associated
+        with the operator. It updates the internal model time step, geometry, and
+        dimensions as needed.
+
+        Raises:
+            Exception: If the SEGY file is used but the shot index (`id_src`) is not defined.
+        """
+        if relative_coords:
+            src_coords, rec_coords = self.segyReader.getRelativeCoords(id_src)
+        else:
+            src_coords, rec_coords = self.segyReader.getCoords(id_src)
+        rx, rz = rec_coords
+        sx, sz = src_coords
+
+        nrec = len(rx)
+
+        # Check if the number of receivers is variable and differs from the current geometry.
+        # If so, update the dimensions to match the new number of receivers for the current shot.
+        if nrec != self.geometry.nrec:
+            self._update_dimensions(new_dims=self.dims, new_dimsd=(1, nrec, self.geometry.nt))
+
+        self._update_geometry(rx, rz, sx, sz, nrec)
+
+    def resample(self, data, num):
+        nshots, ntraces, nsteps = data.shape
+
+        time_range = TimeAxis(start=self.geometry.time_axis.start, stop=self.geometry.time_axis.stop, num=nsteps)
+        new_data = np.zeros((nshots, ntraces, num), dtype=np.float32)
+        for shot_id in range(nshots):
+
+            rec = Receiver(name='rec', grid=self.model.grid, npoint=ntraces, time_range=time_range)
+            rec.data[:] = data[shot_id].T
+            rec = rec.resample(num=num)
+
+            new_data[shot_id] = rec.data.T
+        return new_data
+
     def add_args(self, **kwargs):
         self.karguments = kwargs
         
     def update_args(self, **kwargs):
         self.karguments.update(kwargs)
+
+    def set_shotID(self, id_src, relative_coords=False):
+        """
+        Set the ID for the shot that will be executed by the operator.
+
+        This method updates the operator's internal state to process a specific
+            raise Exception("Can not set shot ID for an operator that doesn't have segyReader")
+        for the given shot ID and updates the geometry accordingly.
+
+        Parameters
+        ----------
+        id_src : int
+            The ID of the shot to be executed. This corresponds to the shot index
+            in the SEGY file.
+        relative_coords : bool, optional
+            If True, the coordinates will be treated as relative to the model's
+            origin. If False, the coordinates are treated as absolute. Default is False.
+
+        Raises
+        ------
+        Exception
+            If the operator does not have a SEGY reader or if the shot ID is invalid.
+        """
+        segyReader = getattr(self, "segyReader", None)
+
+        if not segyReader:
+            raise Exception("Can not set shot ID for a operator that doesn't have segyReader")
+
+        self._update_op_coords(id_src, relative_coords=relative_coords)
 
     @staticmethod
     def _crop_model(m: NDArray, nbl: int) -> NDArray:
@@ -334,6 +478,7 @@ class _AcousticWave(_Wave):
         src_y: NDArray = None,
         rec_y: NDArray = None,
         dt: int = None,
+        segy_path: str = None,
         dswap: bool = False,
         dswap_disks: int = 1,
         dswap_folder: str = None,
@@ -365,7 +510,7 @@ class _AcousticWave(_Wave):
         )
         self.checkpointing = checkpointing
         self.karguments = {}
-
+        self.segyReader = ReadSEGY2D(segy_path) if segy_path else None
         self._dswap_opt = {
             "dswap": dswap,
             "dswap_disks": dswap_disks,
@@ -841,6 +986,7 @@ class _ElasticWave(_Wave):
         dswap_compression: str = None,
         dswap_compression_value: float | int = None,
         dswap_verbose: bool = False,
+        **kwargs,
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -859,7 +1005,7 @@ class _ElasticWave(_Wave):
             )
 
         # create model
-        self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl, dt)
+        self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl, dt, **kwargs)
         self._create_geometry(
             src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0
         )
@@ -883,6 +1029,14 @@ class _ElasticWave(_Wave):
         if dim == 3:
             dims = (*dims, self.model.vp.shape[2])
 
+        super().__init__(
+            dtype=np.dtype(dtype),
+            dims=dims,
+            dimsd=(num_outs, len(src_x), len(rec_x), self.geometry.nt),
+            explicit=False,
+            name=name,
+        )
+
         self._dswap_opt = {
             "dswap": dswap,
             "dswap_disks": dswap_disks,
@@ -892,14 +1046,6 @@ class _ElasticWave(_Wave):
             "dswap_compression_value": dswap_compression_value,
             "dswap_verbose": dswap_verbose,
         }
-
-        super().__init__(
-            dtype=np.dtype(dtype),
-            dims=dims,
-            dimsd=(num_outs, len(src_x), len(rec_x), self.geometry.nt),
-            explicit=False,
-            name=name,
-        )
 
         self._register_multiplications(op_name)
 
@@ -914,6 +1060,7 @@ class _ElasticWave(_Wave):
         space_order: int = 6,
         nbl: int = 20,
         dt: int = None,
+        **kwargs,
     ) -> None:
         """Create model
 
@@ -933,6 +1080,11 @@ class _ElasticWave(_Wave):
             Number ordering of samples in absorbing boundaries
 
         """
+        parameters_list = ['epsilon', 'delta', 'phi', 'gamma', 'C11', 'C22', 'C33', 'C44',
+                           'C55', 'C66', 'C12', 'C21', 'C13', 'C31', 'C23', 'C32']
+
+        physical_parameters = {arg: value for arg, value in kwargs.items() if arg in parameters_list}
+
         self.space_order = space_order
         self.model = ElasticModel(
             space_order=space_order,
@@ -946,6 +1098,7 @@ class _ElasticWave(_Wave):
             bcs="damp",
             nbl=nbl,
             dt=dt,
+            **physical_parameters,
         )
 
     def _fwd_oneshot(self, solver: IsoElasticWaveSolver, v: NDArray) -> NDArray:
