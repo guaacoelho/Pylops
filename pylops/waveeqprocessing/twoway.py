@@ -854,7 +854,7 @@ class _AcousticWave(_Wave):
         else:
             return mtot
 
-    def _fwd_oneshot(self, solver: AcousticWaveSolver, v: NDArray) -> NDArray:
+    def _fwd_oneshot(self, isrc, solver: AcousticWaveSolver, v: NDArray) -> NDArray:
         """Forward modelling for one shot
 
         Parameters
@@ -884,7 +884,11 @@ class _AcousticWave(_Wave):
         # add vp to karguments to be used inside devito's solver
         self.karguments.update({"vp": function})
 
-        d = solver.forward(**self.karguments)[0]
+        # assign source location to source object with custom wavelet
+        if hasattr(self, "wav"):
+            self.wav.coordinates.data[0, :] = self.geometry.src_positions[isrc, :]
+
+        d = solver.forward(**self.karguments, src=None if not hasattr(self, "wav") else self.wav)[0]
         d = d.resample(solver.geometry.dt).data[:][: solver.geometry.nt].T
         return d
 
@@ -925,7 +929,7 @@ class _AcousticWave(_Wave):
 
         for isrc in range(nsrc):
             solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
-            d = self._fwd_oneshot(solver, v)
+            d = self._fwd_oneshot(isrc, solver, v)
             dtot.append(d)
         dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
         return dtot
@@ -1192,7 +1196,7 @@ class _ElasticWave(_Wave):
             **physical_parameters,
         )
 
-    def _fwd_oneshot(self, solver: GenericElasticWaveSolver, v: NDArray) -> NDArray:
+    def _fwd_oneshot(self, isrc, solver: GenericElasticWaveSolver, v: NDArray) -> NDArray:
         """Forward modelling for one shot
 
         Parameters
@@ -1232,11 +1236,14 @@ class _ElasticWave(_Wave):
         # Update 'karguments' to contain the values of the parameters defined in 'args'
         self.karguments.update(dict(zip(args, functions)))
 
+        # assign source location to source object with custom wavelet
+        if hasattr(self, "wav"):
+            self.wav.coordinates.data[0, :] = self.geometry.src_positions[isrc, :]
+
         dim = self.model.dim
 
-        *rec_data, v = solver.forward(**self.karguments, save=self.save_wavefield)[
-            0 : dim + 2
-        ]
+        *rec_data, v = solver.forward(**self.karguments, save=self.save_wavefield,
+                                      src=None if not hasattr(self, "wav") else self.wav)[0 : dim + 2]
         if self.save_wavefield:
             self.src_wavefield.append(v)
 
@@ -1281,7 +1288,7 @@ class _ElasticWave(_Wave):
 
         for isrc in range(nsrc):
             solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
-            d = self._fwd_oneshot(solver, v)
+            d = self._fwd_oneshot(isrc, solver, v)
             dtot.append(deepcopy(d))
 
         # Adjust dimensions
@@ -1581,12 +1588,18 @@ class _ElasticWave(_Wave):
         # If "par" was not passed as a parameter to forward execution, use the operator's default value
         self.karguments["par"] = self.karguments.get("par", self.par)
 
+        # assign source location to source object with custom wavelet
+        if hasattr(self, "wav"):
+            self.wav.coordinates.data[0, :] = self.geometry.src_positions[isrc, :]
+
         # source wavefield
         if hasattr(self, "src_wavefield"):
             u0 = self.src_wavefield[isrc]
         else:
             par = self.karguments.get("par")
-            u0 = solver.forward(save=True if not dswap else False, par=par)[dim + 1]
+            u0 = solver.forward(save=True if not dswap else False,
+                                src=None if not hasattr(self, "wav") else self.wav,
+                                par=par)[dim + 1]
 
         # adjoint modelling (reverse wavefield)
         grad1, grad2, grad3 = solver.jacobian_adjoint(
@@ -1967,7 +1980,7 @@ class _ViscoAcousticWave(_Wave):
         dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
         return dtot
 
-    def _fwd_oneshot(self, solver: AcousticWaveSolver, v: NDArray) -> NDArray:
+    def _fwd_oneshot(self, isrc, solver: AcousticWaveSolver, v: NDArray) -> NDArray:
         """Forward modelling for one shot
 
         Parameters
@@ -1996,7 +2009,12 @@ class _ViscoAcousticWave(_Wave):
 
         # add vp to karguments to be used inside devito's solver
         self.karguments.update({"vp": function})
-        d = solver.forward(**self.karguments)[0]
+
+        # assign source location to source object with custom wavelet
+        if hasattr(self, "wav"):
+            self.wav.coordinates.data[0, :] = self.geometry.src_positions[isrc, :]
+
+        d = solver.forward(**self.karguments, src=None if not hasattr(self, "wav") else self.wav)[0]
         d = d.resample(solver.geometry.dt).data[:][: solver.geometry.nt].T
         return d
 
@@ -2038,7 +2056,7 @@ class _ViscoAcousticWave(_Wave):
 
         for isrc in range(nsrc):
             solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
-            d = self._fwd_oneshot(solver, v)
+            d = self._fwd_oneshot(isrc, solver, v)
             dtot.append(d)
         dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
         return dtot
