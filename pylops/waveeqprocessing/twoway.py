@@ -156,25 +156,42 @@ class _Wave(LinearOperator, PhysicalPropertiesMixin):
             f0=None if f0 is None else f0 * 1e-3,
         )
 
-    def updatesrc(self, wav):
+    def updatesrc(self, wav, method="padding", max_padding=None):
         """Update source wavelet
 
-        This routines is used to allow users to pass a custom source
-        wavelet to replace the source wavelet generated when the
-        object is initialized
+        This routine allows users to pass a custom source
+        wavelet to replace the source wavelet generated during
+        the object's initialization.
 
         Parameters
         ----------
         wav : :obj:`numpy.ndarray`
             Wavelet
+        method : :str
+            Method representing how the data will be filled up to the total nt.
+            - padding
+            - resample
+            - dual -> padding and resample
+            padding up to max_padding and finalize with resample
 
         """
-        wav_padded = np.pad(wav, (0, self.geometry.nt - len(wav)))
+        wav = wav.reshape(-1)
+        if method not in {"padding", "resample", "dual"}:
+            raise ValueError(f"Invalid method '{method}'. Supported methods are 'padding', 'resample', 'dual'.")
+
+        if method == "padding":
+            wav_data = np.pad(wav, (0, self.geometry.nt - len(wav)))
+        elif method == "resample":
+            wav_data = self.resample(wav, self.geometry.nt)
+        elif method == "dual":
+            max_padding = max_padding if max_padding else self.geometry.nt
+            wav_data = np.pad(wav, (0, max_padding - len(wav)))
+            wav_data = self.resample(wav_data, self.geometry.nt)
 
         self.wav = _CustomSource(
             name="src",
             grid=self.model.grid,
-            wav=wav_padded,
+            wav=wav_data,
             time_range=self.geometry.time_axis,
         )
 
@@ -356,24 +373,53 @@ class _Wave(LinearOperator, PhysicalPropertiesMixin):
         self._update_geometry(rx, rz, sx, sz, nrec)
 
     def resample(self, data, num):
-        nshots, ntraces, nsteps = data.shape
+        """
+        Resample the input data to a new number of time steps.
 
-        time_range = TimeAxis(
-            start=self.geometry.time_axis.start,
-            stop=self.geometry.time_axis.stop,
-            num=nsteps,
-        )
-        new_data = np.zeros((nshots, ntraces, num), dtype=np.float32)
-        for shot_id in range(nshots):
+        This method determines whether the input data corresponds to receiver data
+        or source data based on its shape and calls the appropriate resampling method.
 
-            rec = Receiver(
-                name="rec", grid=self.model.grid, npoint=ntraces, time_range=time_range
-            )
-            rec.data[:] = data[shot_id].T
-            rec = rec.resample(num=num)
+        Parameters
+        ----------
+        data : :obj:`numpy.ndarray`
+            Input data to be resampled. Can be either source or receiver data.
+        num : :obj:`int`
+            Number of time steps for the resampled data.
+        """
+        if len(data.shape) == 3:
+            # receivers has shape (nshots, nrec, nt)
+            return self._resample_rec(data, num)
+        else:
+            return self._resample_src(data, num)
 
-            new_data[shot_id] = rec.data.T
+    def _resample_src(self, data, num):
+        nsteps = data.shape[0]
+
+        time_range = TimeAxis(start=self.geometry.time_axis.start, stop=self.geometry.time_axis.stop, num=nsteps)
+        new_data = np.zeros(( num), dtype=np.float32)
+
+        src = PointSource(name='src', grid=self.model.grid, npoint=1, time_range=time_range)
+        src.data[:] = data[:].reshape(-1, 1)
+        src = src.resample(num=num)
+
+        new_data[:] = src.data.T
         return new_data
+
+    def _resample_rec(self, data, num):
+        from scipy import interpolate
+
+        nshots, ntraces, nsteps = data.shape
+        time_range = TimeAxis(start=self.geometry.time_axis.start, stop=self.geometry.time_axis.stop, num=nsteps)
+
+        new_time_range = TimeAxis(start=self.geometry.time_axis.start, stop=self.geometry.time_axis.stop, num=num)
+        new_traces = np.zeros((nshots, ntraces, num), dtype=np.float32)
+        for shot_id in range(nshots):     
+            for i in range(ntraces):
+                tck = interpolate.splrep(time_range.time_values,
+                                        data[shot_id, i, :], k=3)
+                new_traces[shot_id, i] = interpolate.splev(new_time_range.time_values, tck)
+
+        return new_traces
 
     def add_args(self, **kwargs):
         self.karguments = kwargs
