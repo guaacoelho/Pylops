@@ -109,6 +109,16 @@ class ReadSEGY2D():
         """
         return get_velocity_model(path)
 
+    def getsourceData(self, path):
+        """
+        Read source data from a SEGY file
+        """
+        f = segyio.open(path, iline=segyio.tracefield.TraceField.FieldRecord,
+                        xline=segyio.tracefield.TraceField.CDP)
+
+        src_data = f.trace.raw[:]
+        return src_data
+
     def getSourceCoords(self, index=0):
         src_coords = np.array(self.table[index]['Source'])
         sx = np.array([src_coords[0]])
