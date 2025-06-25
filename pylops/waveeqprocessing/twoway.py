@@ -1537,6 +1537,19 @@ class _ViscoAcousticWave(_Wave):
             Data
 
         """
+        # create function representing the physical parameter received as parameter
+        function = Function(
+            name="vp",
+            grid=self.model.grid,
+            space_order=self.model.space_order,
+            parameter=True,
+        )
+
+        # Assignment of values to physical parameters functions based on the values in 'v'
+        initialize_function(function, v, self.model.padsizes)
+
+        # add vp to karguments to be used inside devito's solver
+        self.karguments.update({"vp": function})
         d = solver.forward(**self.karguments)[0]
         d = d.resample(solver.geometry.dt).data[:][: solver.geometry.nt].T
         return d
