@@ -1597,13 +1597,55 @@ class _ViscoAcousticWave(_Wave):
         dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
         return dtot
 
-    def _adj_allshots(self, v: NDArray) -> NDArray:
-        raise Exception("Method not yet implemented")
+    def _grad_oneshot(self, solver: ViscoacousticWaveSolver, isrc, dobs):
+
+        rec = self.geometry.rec.copy()
+        rec.data[:] = dobs.T
+
+        # source wavefield
+        if hasattr(self, "src_wavefield"):
+            p = self.src_wavefield[isrc]
+        else:
+            p = solver.forward(save=True)[1]
+
+        # adjoint modelling (reverse wavefield plus imaging condition)
+        grad, _ = solver.jacobian_adjoint(rec, p)
+
+        return grad
+
+    def _grad_allshots(self, dobs: NDArray) -> NDArray:
+        # create geometry for single source
+        geometry = AcquisitionGeometry(
+            self.model,
+            self.geometry.rec_positions,
+            self.geometry.src_positions[0, :],
+            self.geometry.t0,
+            self.geometry.tn,
+            f0=self.geometry.f0,
+            src_type=self.geometry.src_type,
+        )
+
+        solver = ViscoacousticWaveSolver(
+            self.model,
+            geometry,
+            space_order=self.space_order,
+            kernel=self.kernel,
+            time_order=self.time_order,
+        )
+
+        nsrc = self.geometry.src_positions.shape[0]
+        mtot = np.zeros(self.model.shape, dtype=np.float32)
+
+        for isrc in range(nsrc):
+            solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
+            grad = self._grad_oneshot(solver, isrc, dobs[isrc])
+            mtot += self._crop_model(grad.data, self.model.nbl)
+        return mtot
 
     def _register_multiplications(self, op_name: str) -> None:
         if op_name == "fwd":
             self._acoustic_matvec = self._fwd_allshots
-            self._acoustic_rmatvec = self._adj_allshots
+            self._acoustic_rmatvec = self._grad_allshots
 
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
