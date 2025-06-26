@@ -1143,13 +1143,9 @@ class _ElasticWave(_Wave):
 
         dim = self.model.dim
         
+        *rec_data, v = solver.forward(**self.karguments, save=self.save_wavefield)[0 : dim + 2]
         if self.save_wavefield:
-            rec_tau, rec_vx, rec_vy, rec_vz, v = solver.forward(**self.karguments, save=True)[0 : dim + 2]
             self.src_wavefield.append(v)
-        else:
-            rec_tau, rec_vx, rec_vy, rec_vz = solver.forward(**self.karguments)[0 : dim + 1]
-        
-        rec_data = list([rec_tau, rec_vx, rec_vy, rec_vz])
 
         for ii, d in enumerate(rec_data):
             rec_data[ii] = (
@@ -1200,14 +1196,7 @@ class _ElasticWave(_Wave):
 
         return np.array(rec_data)
     
-    def _imaging_operator(
-        self,
-        model: ElasticModel,
-        img: VectorFunction,
-        geometry: AcquisitionGeometry,
-        space_order: int,
-        dt_ref: float,
-    ) -> Operator:
+    def _imaging_operator(self, img: VectorFunction) -> Operator:
         """Imaging operator built using Devito
 
         Parameters
@@ -1232,6 +1221,10 @@ class _ElasticWave(_Wave):
         """
         # Define the wavefield with the size of the model and the time dimension
         dswap = self._dswap_opt["dswap"]
+        model = self.model
+        geometry = self.geometry
+        space_order = self.model.space_order
+        dt_ref = self.geometry.dt
         
         v = VectorTimeFunction(name='v', grid=model.grid,
                             save=geometry.nt if not dswap else None,
@@ -1399,9 +1392,7 @@ class _ElasticWave(_Wave):
         
         nsrc = self.geometry.src_positions.shape[0]
         for isrc in range(nsrc):
-            imaging = self._imaging_operator(self.model, image, self.geometry,
-                            self.model.space_order, self.geometry.dt,
-                            **kwargs)
+            imaging = self._imaging_operator(image, **kwargs)
             # For each dobs get data equivalent to isrc shot
             rec_i = [rec[isrc] for rec in dobs]
 
