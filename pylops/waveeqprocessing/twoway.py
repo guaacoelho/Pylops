@@ -11,6 +11,7 @@ from copy import deepcopy
 from typing import Tuple, Union
 
 import numpy as np
+import logging
 
 from pylops import LinearOperator
 from pylops.utils import deps
@@ -22,13 +23,14 @@ from pylops.waveeqprocessing._propertiesmixin import PhysicalPropertiesMixin
 devito_message = deps.devito_import("the twoway module")
 
 if devito_message is None:
-    from devito import Function
+    from devito import (Function, VectorFunction, VectorTimeFunction,
+                        TensorTimeFunction, Operator, Eq, DiskSwapConfig)
     from devito.builtins import initialize_function
 
     from examples.seismic import AcquisitionGeometry, Model, Receiver
     from examples.seismic.acoustic import AcousticWaveSolver
     from examples.seismic.source import TimeAxis
-    from examples.seismic.stiffness import IsoElasticWaveSolver, ElasticModel
+    from examples.seismic.stiffness import ElasticModel, IsoElasticWaveSolver, elastic_stencil
     from examples.seismic.utils import PointSource, sources
     from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
 
@@ -353,6 +355,9 @@ class _Wave(LinearOperator, PhysicalPropertiesMixin):
     def add_args(self, **kwargs):
         self.karguments = kwargs
 
+    def update_args(self, **kwargs):
+        self.karguments.update(kwargs)
+
     def set_shotID(self, id_src, relative_coords=False):
         """
         Set the ID for the shot that will be executed by the operator.
@@ -474,7 +479,7 @@ class _AcousticWave(_Wave):
         dswap: bool = False,
         dswap_disks: int = 1,
         dswap_folder: str = None,
-        dswap_folder_path: str = None,
+        dswap_path: str = None,
         dswap_compression: str = None,
         dswap_compression_value: float | int = None,
         dswap_verbose: bool = False,
@@ -507,7 +512,7 @@ class _AcousticWave(_Wave):
             "dswap": dswap,
             "dswap_disks": dswap_disks,
             "dswap_folder": dswap_folder,
-            "dswap_folder_path": dswap_folder_path,
+            "dswap_path": dswap_path,
             "dswap_compression": dswap_compression,
             "dswap_compression_value": dswap_compression_value,
             "dswap_verbose": dswap_verbose,
@@ -969,10 +974,11 @@ class _ElasticWave(_Wave):
         dt: int = None,
         src_y: NDArray = None,
         rec_y: NDArray = None,
+        save_wavefield: bool = False,
         dswap: bool = False,
         dswap_disks: int = 1,
         dswap_folder: str = None,
-        dswap_folder_path: str = None,
+        dswap_path: str = None,
         dswap_compression: str = None,
         dswap_compression_value: float | int = None,
         dswap_verbose: bool = False,
@@ -980,6 +986,9 @@ class _ElasticWave(_Wave):
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
+
+        init_logger = logging.getLogger("init_logger")
+        init_logger.setLevel(logging.WARNING)
 
         is_2d = len(shape) == 2
         is_3d = len(shape) == 3
@@ -1004,6 +1013,15 @@ class _ElasticWave(_Wave):
         self.karguments = {}
         dim = self.model.dim
 
+        if dswap and save_wavefield:
+            init_logger.warning(
+                "Disk swap is incompatible with wave saving. Disabling wave saving"
+            )
+
+        self.save_wavefield = save_wavefield if (not dswap) else False
+        if self.save_wavefield:
+            self.src_wavefield = []
+
         n_input = 3
         num_outs = dim + 1
         dims = (n_input, self.model.vp.shape[0], self.model.vp.shape[1])
@@ -1023,7 +1041,7 @@ class _ElasticWave(_Wave):
             "dswap": dswap,
             "dswap_disks": dswap_disks,
             "dswap_folder": dswap_folder,
-            "dswap_folder_path": dswap_folder_path,
+            "dswap_path": dswap_path,
             "dswap_compression": dswap_compression,
             "dswap_compression_value": dswap_compression_value,
             "dswap_verbose": dswap_verbose,
@@ -1077,8 +1095,8 @@ class _ElasticWave(_Wave):
             shape=shape,
             dtype=np.float32,
             spacing=spacing,
-            nbl=nbl,
             bcs="damp",
+            nbl=nbl,
             dt=dt,
             **physical_parameters,
         )
@@ -1124,7 +1142,10 @@ class _ElasticWave(_Wave):
         self.karguments.update(dict(zip(args, functions)))
 
         dim = self.model.dim
-        rec_data = list(solver.forward(**self.karguments)[0 : dim + 1])
+
+        *rec_data, v = solver.forward(**self.karguments, save=self.save_wavefield)[0 : dim + 2]
+        if self.save_wavefield:
+            self.src_wavefield.append(v)
 
         for ii, d in enumerate(rec_data):
             rec_data[ii] = (
@@ -1174,6 +1195,220 @@ class _ElasticWave(_Wave):
         rec_data = list(zip(*dtot))
 
         return np.array(rec_data)
+
+    def _imaging_operator(self, img: VectorFunction) -> Operator:
+        """Imaging operator built using Devito
+
+        Parameters
+        ----------
+        model : :obj:`Model`
+            Devito velocity model
+        img : :obj:`VectorFunction`
+            Image function
+        geometry : :obj:`Geometry`
+            Devito geometry
+        space_order : :obj:`int`
+            Spatial ordering of FD stencil
+        dt_ref : :obj:`float`
+            Time discretization step
+        Returns
+        -------
+        imop : :obj:`Operator`
+            The imaging operator
+        u : :obj:`VectorTimeFunction`
+            Backward wavefield
+
+        """
+        # Define the wavefield with the size of the model and the time dimension
+        dswap = self._dswap_opt["dswap"]
+        model = self.model
+        geometry = self.geometry
+        space_order = self.model.space_order
+        dt_ref = self.geometry.dt
+
+        v = VectorTimeFunction(name='v', grid=model.grid,
+                               save=geometry.nt if not dswap else None,
+                               space_order=space_order, time_order=1)
+
+        u = VectorTimeFunction(name='u', grid=model.grid, space_order=space_order,
+                               time_order=1)
+        sig = TensorTimeFunction(name='sig', grid=model.grid, space_order=space_order,
+                                 time_order=1)
+
+        eqn = elastic_stencil(model, u, sig, forward=False, par='vp-vs-rho')
+
+        dt = dt_ref
+        b = 1. / model.rho
+
+        # Define residual injection at the location of the forward receivers
+        rec_vx = PointSource(name='rec_vx', grid=model.grid,
+                             time_range=geometry.time_axis,
+                             coordinates=geometry.rec_positions)
+
+        rec_vz = PointSource(name='rec_vz', grid=model.grid,
+                             time_range=geometry.time_axis,
+                             coordinates=geometry.rec_positions)
+
+        rec_vy = PointSource(name='rec_vy', grid=model.grid,
+                             time_range=geometry.time_axis,
+                             coordinates=geometry.rec_positions)
+
+        rec_term_vx = rec_vx.inject(field=u[0].backward, expr=dt * rec_vx * b)
+        rec_term_vz = rec_vz.inject(field=u[-1].backward, expr=dt * rec_vz * b)
+
+        rec_expr = rec_term_vx + rec_term_vz
+
+        if model.grid.dim == 3:
+            rec_expr += rec_vy.inject(field=u[1].backward, expr=dt * rec_vy * b)
+
+        ixx_update = [Eq(img[0], img[0] + v[0] * u[0])]
+        izz_update = [Eq(img[-1], img[-1] + v[-1] * u[-1])]
+
+        img_update = ixx_update + izz_update
+
+        if model.grid.dim == 3:
+            img_update += [Eq(img[1], img[1] + v[1] * u[1])]
+
+        opt = {}
+        if dswap:
+            dconfig = DiskSwapConfig(
+                functions=[v],
+                mode="read",
+                path=self._dswap_opt["dswap_path"],
+                folder=self._dswap_opt["dswap_folder"],
+                verbose=self._dswap_opt["dswap_verbose"]
+            )
+
+            opt.update({"opt": ('advanced', {'disk-swap': dconfig})})
+
+        return Operator(
+            eqn + rec_expr + img_update,
+            subs=model.spacing_map,
+            name='Imaging',
+            **opt
+        )
+
+    def _imaging_oneshot(
+        self,
+        isrc: int,
+        recs: NDArray,
+        imaging: Operator,
+        solver: IsoElasticWaveSolver,
+        **kwargs,
+    ) -> None:
+        """Imaging modelling for one shot
+
+        Parameters
+        ----------
+        isrc : :obj:`float`
+            Index of source to model
+        recs : :obj:`np.ndarray`
+            Receiver observed data to inject
+        imaging : :obj:`Operator`
+            Imaging operator build with Devito
+        solver : :obj:`IsoElasticWaveSolver`
+            Devito's solver object
+
+        Returns
+        -------
+
+        """
+        vfields = kwargs.copy()
+        dim = self.model.dim
+
+        rec_vx = PointSource(name='dobs_vx_resam', grid=self.model.grid,
+                             time_range=self.geometry.time_axis,
+                             coordinates=self.geometry.rec_positions, data=recs[0].T)
+        rec_vz = PointSource(name='dobs_vz_resam', grid=self.model.grid,
+                             time_range=self.geometry.time_axis,
+                             coordinates=self.geometry.rec_positions, data=recs[-1].T)
+
+        vfields.update({"rec_vx": rec_vx, "rec_vz": rec_vz})
+
+        if (dim == 3):
+            rec_vy = PointSource(name='dobs_vy_resam', grid=self.model.grid,
+                                 time_range=self.geometry.time_axis,
+                                 coordinates=self.geometry.rec_positions, data=recs[1].T)
+
+            vfields.update({"rec_vy": rec_vy})
+
+        if solver:
+            v0 = solver.forward(save=True if not self._dswap_opt["dswap"] else False)[dim + 1]
+        else:
+            v0 = self.src_wavefield[isrc]
+
+        vfields.update({k.name: k for k in v0})
+        vfields.update({'dt': self.model.critical_dt})
+        imaging(**vfields)
+
+    def _imaging_allshots(self, dobs: NDArray, **kwargs) -> NDArray:
+        """Imaging modelling for all shots
+
+        Parameters
+        ----------
+        dobs : :obj:`np.ndarray`
+            Observed data to inject.
+
+            The shape of dobs is (n_input, nsrc, nrecs. nt):
+            If it is 2-dimensional, the positions are as follows:
+                dobs[0] = rec_tau
+                dobs[1] = rec_vx
+                dobs[2] = rec_vz
+
+            And if 3-dimensional:
+                dobs[0] = rec_tau
+                dobs[1] = rec_vx
+                dobs[2] = rec_vy
+                dobs[3] = rec_vz
+
+        Returns
+        -------
+        imf : :obj:`np.ndarray`
+            Image generated by all shots
+
+        """
+        if (hasattr(self, "src_wavefield") and self.src_wavefield):
+            solver = None
+        else:
+            # create geometry for single source
+            geometry = AcquisitionGeometry(
+                self.model,
+                self.geometry.rec_positions,
+                self.geometry.src_positions[0, :],
+                self.geometry.t0,
+                self.geometry.tn,
+                f0=self.geometry.f0,
+                src_type=self.geometry.src_type,
+            )
+
+            solver = IsoElasticWaveSolver(
+                self.model, geometry, space_order=self.space_order, **self._dswap_opt
+            )
+
+        image = VectorFunction(name="image", grid=self.model.grid)
+
+        nsrc = self.geometry.src_positions.shape[0]
+        for isrc in range(nsrc):
+            imaging = self._imaging_operator(image, **kwargs)
+            # For each dobs get data equivalent to isrc shot
+            rec_i = [rec[isrc] for rec in dobs]
+
+            # Positioning forward propagation src, if needed
+            if solver:
+                solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
+
+            self._imaging_oneshot(isrc, rec_i, imaging, solver)
+
+        shape = self.model.grid.shape
+        ndim = len(shape)
+        imf = np.zeros((ndim, *shape), dtype=np.float32)
+        for ii, im in enumerate(image):
+            imf[ii] = im.data
+
+        return imf
+
+    def rtm(self, recs: NDArray, **kwargs) -> NDArray:
+        return self._imaging_allshots(recs, **kwargs)
 
     def _grad_oneshot(self, isrc, dobs, solver: IsoElasticWaveSolver):
         """Adjoint gradient modelling for one shot
@@ -1225,7 +1460,7 @@ class _ElasticWave(_Wave):
             par = self.karguments.get("par")
             u0 = solver.forward(save=True if not dswap else False, par=par)[dim + 1]
 
-        # adjoint modelling (reverse wavefield plus imaging condition)
+        # adjoint modelling (reverse wavefield)
         grad1, grad2, grad3 = solver.jacobian_adjoint(
             rec_vx,
             rec_vz,
@@ -1296,6 +1531,7 @@ class _ElasticWave(_Wave):
             # post-process data
             for ii, g in enumerate(grads):
                 mtot[ii] += g.data
+
         return mtot
 
     def _register_multiplications(self, op_name: str) -> None:
