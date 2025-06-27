@@ -7,30 +7,41 @@ __all__ = [
     "ViscoAcousticWave3D",
 ]
 
+import logging
 from copy import deepcopy
 from typing import Tuple, Union
 
 import numpy as np
-import logging
 
 from pylops import LinearOperator
 from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
-from pylops.waveeqprocessing.segy import ReadSEGY2D
 from pylops.waveeqprocessing._propertiesmixin import PhysicalPropertiesMixin
+from pylops.waveeqprocessing.segy import ReadSEGY2D
 
 devito_message = deps.devito_import("the twoway module")
 
 if devito_message is None:
-    from devito import (Function, VectorFunction, VectorTimeFunction,
-                        TensorTimeFunction, Operator, Eq, DiskSwapConfig)
+    from devito import (
+        DiskSwapConfig,
+        Eq,
+        Function,
+        Operator,
+        TensorTimeFunction,
+        VectorFunction,
+        VectorTimeFunction,
+    )
     from devito.builtins import initialize_function
 
     from examples.seismic import AcquisitionGeometry, Model, Receiver
     from examples.seismic.acoustic import AcousticWaveSolver
     from examples.seismic.source import TimeAxis
-    from examples.seismic.stiffness import ElasticModel, IsoElasticWaveSolver, elastic_stencil
+    from examples.seismic.stiffness import (
+        ElasticModel,
+        GenericElasticWaveSolver,
+        elastic_stencil,
+    )
     from examples.seismic.utils import PointSource, sources
     from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
 
@@ -307,7 +318,7 @@ class _Wave(LinearOperator, PhysicalPropertiesMixin):
             self.geometry.t0,
             self.geometry.tn,
             src_type=self.geometry.src_type,
-            f0=self.geometry.f0
+            f0=self.geometry.f0,
         )
 
     def _update_op_coords(self, id_src, relative_coords=False):
@@ -334,18 +345,26 @@ class _Wave(LinearOperator, PhysicalPropertiesMixin):
         # Check if the number of receivers is variable and differs from the current geometry.
         # If so, update the dimensions to match the new number of receivers for the current shot.
         if nrec != self.geometry.nrec:
-            self._update_dimensions(new_dims=self.dims, new_dimsd=(1, nrec, self.geometry.nt))
+            self._update_dimensions(
+                new_dims=self.dims, new_dimsd=(1, nrec, self.geometry.nt)
+            )
 
         self._update_geometry(rx, rz, sx, sz, nrec)
 
     def resample(self, data, num):
         nshots, ntraces, nsteps = data.shape
 
-        time_range = TimeAxis(start=self.geometry.time_axis.start, stop=self.geometry.time_axis.stop, num=nsteps)
+        time_range = TimeAxis(
+            start=self.geometry.time_axis.start,
+            stop=self.geometry.time_axis.stop,
+            num=nsteps,
+        )
         new_data = np.zeros((nshots, ntraces, num), dtype=np.float32)
         for shot_id in range(nshots):
 
-            rec = Receiver(name='rec', grid=self.model.grid, npoint=ntraces, time_range=time_range)
+            rec = Receiver(
+                name="rec", grid=self.model.grid, npoint=ntraces, time_range=time_range
+            )
             rec.data[:] = data[shot_id].T
             rec = rec.resample(num=num)
 
@@ -383,7 +402,9 @@ class _Wave(LinearOperator, PhysicalPropertiesMixin):
         segyReader = getattr(self, "segyReader", None)
 
         if not segyReader:
-            raise Exception("Can not set shot ID for a operator that doesn't have segyReader")
+            raise Exception(
+                "Can not set shot ID for a operator that doesn't have segyReader"
+            )
 
         self._update_op_coords(id_src, relative_coords=relative_coords)
 
@@ -1004,7 +1025,9 @@ class _ElasticWave(_Wave):
             )
 
         # create model
-        self._create_model(shape, origin, spacing, vp, vs, rho, space_order, nbl, dt, **kwargs)
+        self._create_model(
+            shape, origin, spacing, vp, vs, rho, space_order, nbl, dt, **kwargs
+        )
         self._create_geometry(
             src_x, src_y, src_z, rec_x, rec_y, rec_z, t0, tn, src_type, f0=f0
         )
@@ -1080,10 +1103,28 @@ class _ElasticWave(_Wave):
             Number ordering of samples in absorbing boundaries
 
         """
-        parameters_list = ['epsilon', 'delta', 'phi', 'gamma', 'C11', 'C22', 'C33', 'C44',
-                           'C55', 'C66', 'C12', 'C21', 'C13', 'C31', 'C23', 'C32']
+        parameters_list = [
+            "epsilon",
+            "delta",
+            "phi",
+            "gamma",
+            "C11",
+            "C22",
+            "C33",
+            "C44",
+            "C55",
+            "C66",
+            "C12",
+            "C21",
+            "C13",
+            "C31",
+            "C23",
+            "C32",
+        ]
 
-        physical_parameters = {arg: value for arg, value in kwargs.items() if arg in parameters_list}
+        physical_parameters = {
+            arg: value for arg, value in kwargs.items() if arg in parameters_list
+        }
 
         self.space_order = space_order
         self.model = ElasticModel(
@@ -1101,12 +1142,12 @@ class _ElasticWave(_Wave):
             **physical_parameters,
         )
 
-    def _fwd_oneshot(self, solver: IsoElasticWaveSolver, v: NDArray) -> NDArray:
+    def _fwd_oneshot(self, solver: GenericElasticWaveSolver, v: NDArray) -> NDArray:
         """Forward modelling for one shot
 
         Parameters
         ----------
-        solver : :obj:`IsoElasticWaveSolver`
+        solver : :obj:`GenericElasticWaveSolver`
             Devito's solver object.
         v : :obj:`np.ndarray`
             Velocity Model
@@ -1143,7 +1184,9 @@ class _ElasticWave(_Wave):
 
         dim = self.model.dim
 
-        *rec_data, v = solver.forward(**self.karguments, save=self.save_wavefield)[0 : dim + 2]
+        *rec_data, v = solver.forward(**self.karguments, save=self.save_wavefield)[
+            0 : dim + 2
+        ]
         if self.save_wavefield:
             self.src_wavefield.append(v)
 
@@ -1182,7 +1225,7 @@ class _ElasticWave(_Wave):
         dtot = []
 
         # create solver
-        solver = IsoElasticWaveSolver(
+        solver = GenericElasticWaveSolver(
             self.model, geometry, space_order=self.space_order
         )
 
@@ -1226,32 +1269,47 @@ class _ElasticWave(_Wave):
         space_order = self.model.space_order
         dt_ref = self.geometry.dt
 
-        v = VectorTimeFunction(name='v', grid=model.grid,
-                               save=geometry.nt if not dswap else None,
-                               space_order=space_order, time_order=1)
+        v = VectorTimeFunction(
+            name="v",
+            grid=model.grid,
+            save=geometry.nt if not dswap else None,
+            space_order=space_order,
+            time_order=1,
+        )
 
-        u = VectorTimeFunction(name='u', grid=model.grid, space_order=space_order,
-                               time_order=1)
-        sig = TensorTimeFunction(name='sig', grid=model.grid, space_order=space_order,
-                                 time_order=1)
+        u = VectorTimeFunction(
+            name="u", grid=model.grid, space_order=space_order, time_order=1
+        )
+        sig = TensorTimeFunction(
+            name="sig", grid=model.grid, space_order=space_order, time_order=1
+        )
 
-        eqn = elastic_stencil(model, u, sig, forward=False, par='vp-vs-rho')
+        eqn = elastic_stencil(model, u, sig, forward=False, par="vp-vs-rho")
 
         dt = dt_ref
-        b = 1. / model.rho
+        b = 1.0 / model.rho
 
         # Define residual injection at the location of the forward receivers
-        rec_vx = PointSource(name='rec_vx', grid=model.grid,
-                             time_range=geometry.time_axis,
-                             coordinates=geometry.rec_positions)
+        rec_vx = PointSource(
+            name="rec_vx",
+            grid=model.grid,
+            time_range=geometry.time_axis,
+            coordinates=geometry.rec_positions,
+        )
 
-        rec_vz = PointSource(name='rec_vz', grid=model.grid,
-                             time_range=geometry.time_axis,
-                             coordinates=geometry.rec_positions)
+        rec_vz = PointSource(
+            name="rec_vz",
+            grid=model.grid,
+            time_range=geometry.time_axis,
+            coordinates=geometry.rec_positions,
+        )
 
-        rec_vy = PointSource(name='rec_vy', grid=model.grid,
-                             time_range=geometry.time_axis,
-                             coordinates=geometry.rec_positions)
+        rec_vy = PointSource(
+            name="rec_vy",
+            grid=model.grid,
+            time_range=geometry.time_axis,
+            coordinates=geometry.rec_positions,
+        )
 
         rec_term_vx = rec_vx.inject(field=u[0].backward, expr=dt * rec_vx * b)
         rec_term_vz = rec_vz.inject(field=u[-1].backward, expr=dt * rec_vz * b)
@@ -1276,16 +1334,13 @@ class _ElasticWave(_Wave):
                 mode="read",
                 path=self._dswap_opt["dswap_path"],
                 folder=self._dswap_opt["dswap_folder"],
-                verbose=self._dswap_opt["dswap_verbose"]
+                verbose=self._dswap_opt["dswap_verbose"],
             )
 
-            opt.update({"opt": ('advanced', {'disk-swap': dconfig})})
+            opt.update({"opt": ("advanced", {"disk-swap": dconfig})})
 
         return Operator(
-            eqn + rec_expr + img_update,
-            subs=model.spacing_map,
-            name='Imaging',
-            **opt
+            eqn + rec_expr + img_update, subs=model.spacing_map, name="Imaging", **opt
         )
 
     def _imaging_oneshot(
@@ -1293,7 +1348,7 @@ class _ElasticWave(_Wave):
         isrc: int,
         recs: NDArray,
         imaging: Operator,
-        solver: IsoElasticWaveSolver,
+        solver: GenericElasticWaveSolver,
         **kwargs,
     ) -> None:
         """Imaging modelling for one shot
@@ -1306,7 +1361,7 @@ class _ElasticWave(_Wave):
             Receiver observed data to inject
         imaging : :obj:`Operator`
             Imaging operator build with Devito
-        solver : :obj:`IsoElasticWaveSolver`
+        solver : :obj:`GenericElasticWaveSolver`
             Devito's solver object
 
         Returns
@@ -1316,29 +1371,43 @@ class _ElasticWave(_Wave):
         vfields = kwargs.copy()
         dim = self.model.dim
 
-        rec_vx = PointSource(name='dobs_vx_resam', grid=self.model.grid,
-                             time_range=self.geometry.time_axis,
-                             coordinates=self.geometry.rec_positions, data=recs[0].T)
-        rec_vz = PointSource(name='dobs_vz_resam', grid=self.model.grid,
-                             time_range=self.geometry.time_axis,
-                             coordinates=self.geometry.rec_positions, data=recs[-1].T)
+        rec_vx = PointSource(
+            name="dobs_vx_resam",
+            grid=self.model.grid,
+            time_range=self.geometry.time_axis,
+            coordinates=self.geometry.rec_positions,
+            data=recs[0].T,
+        )
+        rec_vz = PointSource(
+            name="dobs_vz_resam",
+            grid=self.model.grid,
+            time_range=self.geometry.time_axis,
+            coordinates=self.geometry.rec_positions,
+            data=recs[-1].T,
+        )
 
         vfields.update({"rec_vx": rec_vx, "rec_vz": rec_vz})
 
-        if (dim == 3):
-            rec_vy = PointSource(name='dobs_vy_resam', grid=self.model.grid,
-                                 time_range=self.geometry.time_axis,
-                                 coordinates=self.geometry.rec_positions, data=recs[1].T)
+        if dim == 3:
+            rec_vy = PointSource(
+                name="dobs_vy_resam",
+                grid=self.model.grid,
+                time_range=self.geometry.time_axis,
+                coordinates=self.geometry.rec_positions,
+                data=recs[1].T,
+            )
 
             vfields.update({"rec_vy": rec_vy})
 
         if solver:
-            v0 = solver.forward(save=True if not self._dswap_opt["dswap"] else False)[dim + 1]
+            v0 = solver.forward(save=True if not self._dswap_opt["dswap"] else False)[
+                dim + 1
+            ]
         else:
             v0 = self.src_wavefield[isrc]
 
         vfields.update({k.name: k for k in v0})
-        vfields.update({'dt': self.model.critical_dt})
+        vfields.update({"dt": self.model.critical_dt})
         imaging(**vfields)
 
     def _imaging_allshots(self, dobs: NDArray, **kwargs) -> NDArray:
@@ -1367,7 +1436,7 @@ class _ElasticWave(_Wave):
             Image generated by all shots
 
         """
-        if (hasattr(self, "src_wavefield") and self.src_wavefield):
+        if hasattr(self, "src_wavefield") and self.src_wavefield:
             solver = None
         else:
             # create geometry for single source
@@ -1381,7 +1450,7 @@ class _ElasticWave(_Wave):
                 src_type=self.geometry.src_type,
             )
 
-            solver = IsoElasticWaveSolver(
+            solver = GenericElasticWaveSolver(
                 self.model, geometry, space_order=self.space_order, **self._dswap_opt
             )
 
@@ -1410,7 +1479,7 @@ class _ElasticWave(_Wave):
     def rtm(self, recs: NDArray, **kwargs) -> NDArray:
         return self._imaging_allshots(recs, **kwargs)
 
-    def _grad_oneshot(self, isrc, dobs, solver: IsoElasticWaveSolver):
+    def _grad_oneshot(self, isrc, dobs, solver: GenericElasticWaveSolver):
         """Adjoint gradient modelling for one shot
 
         Parameters
@@ -1419,7 +1488,7 @@ class _ElasticWave(_Wave):
             Index of source to model
         dobs : :obj:`np.ndarray`
             Observed data to inject
-        solver : :obj:`IsoElasticWaveSolver`
+        solver : :obj:`GenericElasticWaveSolver`
             Devito's solver object
 
         Returns
@@ -1517,7 +1586,7 @@ class _ElasticWave(_Wave):
         elif self.model.dim == 3:
             mtot = np.zeros((3, shape[0], shape[1], shape[2]), dtype=np.float32)
 
-        solver = IsoElasticWaveSolver(
+        solver = GenericElasticWaveSolver(
             self.model, geometry, space_order=self.space_order, **self._dswap_opt
         )
 
