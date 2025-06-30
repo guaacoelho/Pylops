@@ -1408,7 +1408,7 @@ class _ElasticWave(_Wave):
         return imf
 
     def rtm(self, recs: NDArray, **kwargs) -> NDArray:
-        controller=kwargs.pop("mpi_controller", None)
+        controller = kwargs.pop("mpi_controller", None)
         image = self._imaging_allshots(recs, **kwargs)
 
         if (controller):
