@@ -9,7 +9,7 @@ __all__ = [
 
 import logging
 from copy import deepcopy
-from typing import Tuple, Union
+from typing import Tuple, Union, Callable
 
 import numpy as np
 
@@ -2068,6 +2068,22 @@ class _ViscoMultiparameterWave(_ViscoAcousticWave):
         if op_name == "born":
             self._acoustic_matvec = self._born_allshots
             # self._acoustic_rmatvec = self._grad_allshots
+
+    def adjoint(self):
+        """
+        If the direct modeling operation is forward, it is necessary to adapt the dimensions to make them
+        compatible with the gradient output.
+        """
+        # Check if the operator's name is 'fwd' to determine if forward modeling is being performed
+        if self.op_name == "fwd":
+                Op = deepcopy(self)
+                new_dims = (2, *Op.dims)
+                # Updates input dimensions to reflect the extra channel expected by the gradient output
+                Op._update_dimensions(new_dims, Op.dimsd)
+                return LinearOperator.adjoint(Op)
+        return super().adjoint()
+
+    H: Callable[[LinearOperator], LinearOperator] = property(adjoint)
 
 AcousticWave2D = _AcousticWave
 AcousticWave3D = _AcousticWave
