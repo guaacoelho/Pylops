@@ -2068,6 +2068,8 @@ class _ViscoMultiparameterWave(_ViscoAcousticWave):
         if op_name == "born":
             self._acoustic_matvec = self._born_allshots
             # self._acoustic_rmatvec = self._grad_allshots
+        if op_name == "fwd":
+            self._acoustic_matvec = self._fwd_allshots
 
     def adjoint(self):
         """
