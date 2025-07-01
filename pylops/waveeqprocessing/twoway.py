@@ -2078,12 +2078,12 @@ class _ViscoMultiparameterWave(_ViscoAcousticWave):
         """
         # Check if the operator's name is 'fwd' to determine if forward modeling is being performed
         if self.op_name == "fwd":
-                Op = deepcopy(self)
-                new_dims = (2, *Op.dims)
-                # Updates input dimensions to reflect the extra channel expected by the gradient output
-                Op._update_dimensions(new_dims, Op.dimsd)
-                return LinearOperator.adjoint(Op)
-        return super().adjoint()
+            Op = deepcopy(self)
+            new_dims = (2, *Op.dims)
+            # Updates input dimensions to reflect the extra channel expected by the gradient output
+            Op._update_dimensions(new_dims, Op.dimsd)
+            return LinearOperator.adjoint(Op)
+        return LinearOperator.adjoint(self)
 
     H: Callable[[LinearOperator], LinearOperator] = property(adjoint)
 
