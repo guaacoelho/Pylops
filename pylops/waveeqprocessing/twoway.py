@@ -2104,11 +2104,58 @@ class _ViscoMultiparameterWave(_ViscoAcousticWave):
         d = d.resample(solver.geometry.dt).data[:][: solver.geometry.nt].T
         return d
 
+    def _grad_oneshot(self, solver: ViscoacousticWaveSolverMulti, isrc, rec_data):
+
+        rec = self.geometry.rec.copy()
+        rec.data[:] = rec_data.T[:]
+
+        # source wavefield
+        if hasattr(self, "src_wavefield"):
+            p = self.src_wavefield[isrc]
+        else:
+            p = solver.forward(save=True)[1]
+
+        # adjoint modelling (reverse wavefield plus imaging condition)
+        grad_m, grad_tau, _ = solver.jacobian_adjoint(rec, p)
+
+        return grad_m, grad_tau
+
+    def _grad_allshots(self, rec_data: NDArray) -> NDArray:
+        # create geometry for single source
+        geometry = AcquisitionGeometry(
+            self.model,
+            self.geometry.rec_positions,
+            self.geometry.src_positions[0, :],
+            self.geometry.t0,
+            self.geometry.tn,
+            f0=self.geometry.f0,
+            src_type=self.geometry.src_type,
+        )
+
+        solver = ViscoacousticWaveSolverMulti(
+            self.model,
+            geometry,
+            space_order=self.space_order,
+            kernel=self.kernel,
+            time_order=self.time_order,
+        )
+
+        nsrc = self.geometry.src_positions.shape[0]
+        mtot = np.zeros((2, *self.model.shape), dtype=np.float32)
+
+        for isrc in range(nsrc):
+            solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
+            grad_m, grad_tau = self._grad_oneshot(solver, isrc, rec_data[isrc])
+            mtot[0] += self._crop_model(grad_m.data, self.model.nbl)
+            mtot[1] += self._crop_model(grad_tau.data, self.model.nbl)
+        return mtot
+
     def _register_multiplications(self, op_name: str) -> None:
         if op_name == "born":
-            self._acoustic_matvec = self._born_allshots
+            self._viscoMulti_matvec = self._born_allshots
         if op_name == "fwd":
-            self._acoustic_matvec = self._fwd_allshots
+            self._viscoMulti_matvec = self._fwd_allshots
+        self._viscoMulti_rmatvec = self._grad_allshots
 
     def adjoint(self):
         """
@@ -2123,6 +2170,16 @@ class _ViscoMultiparameterWave(_ViscoAcousticWave):
             Op._update_dimensions(new_dims, Op.dimsd)
             return LinearOperator.adjoint(Op)
         return LinearOperator.adjoint(self)
+    
+    @reshaped
+    def _matvec(self, x: NDArray) -> NDArray:
+        y = self._viscoMulti_matvec(x)
+        return y
+
+    @reshaped
+    def _rmatvec(self, x: NDArray) -> NDArray:
+        y = self._viscoMulti_rmatvec(x)
+        return y
 
     H: Callable[[LinearOperator], LinearOperator] = property(adjoint)
 
