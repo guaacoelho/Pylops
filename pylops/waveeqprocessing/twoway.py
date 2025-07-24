@@ -9,7 +9,7 @@ __all__ = [
 
 import logging
 from copy import deepcopy
-from typing import Tuple, Union
+from typing import Tuple, Union, Callable
 
 import numpy as np
 
@@ -44,6 +44,7 @@ if devito_message is None:
     )
     from examples.seismic.utils import PointSource, sources
     from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
+    from examples.seismic.multiparameter.viscoacoustic import ViscoacousticWaveSolver as ViscoacousticWaveSolverMulti
 
 
 class _CustomSource(PointSource):
@@ -1720,6 +1721,7 @@ class _ViscoAcousticWave(_Wave):
         not (``False``)
 
     """
+    _solver_type = ViscoacousticWaveSolver
 
     def __init__(
         self,
@@ -1774,15 +1776,21 @@ class _ViscoAcousticWave(_Wave):
         self.kernel = kernel
         self.time_order = time_order
         self.karguments = {}
+        self.op_name = op_name
+
+        dims = self._compute_dims(vp.shape)
 
         super().__init__(
             dtype=np.dtype(dtype),
-            dims=vp.shape,
+            dims=dims,
             dimsd=(len(src_x), len(rec_x), self.geometry.nt),
             explicit=False,
             name=name,
         )
         self._register_multiplications(op_name)
+
+    def _compute_dims(self, grid_shape):
+        return grid_shape
 
     def _create_model(
         self,
@@ -1831,6 +1839,81 @@ class _ViscoAcousticWave(_Wave):
             nbl=nbl,
             dt=dt,
         )
+
+    def _born_oneshot(self, solver: ViscoacousticWaveSolver, dm: NDArray) -> NDArray:
+        """Born modelling for one shot
+
+        Parameters
+        ----------
+        solver : :obj:`ViscoacousticWaveSolver`
+            Devito's solver object.
+        dm : :obj:`np.ndarray`
+            Model perturbation
+
+        Returns
+        -------
+        d : :obj:`np.ndarray`
+            Data
+
+        """
+        dmext = np.zeros(self.model.grid.shape, dtype=np.float32)
+
+        nbl = self.model.nbl
+        slices = tuple(slice(nbl, -nbl) for _ in range(dmext.ndim))
+        dmext[slices] = dm
+
+        # assign source location to source object with custom wavelet
+        if hasattr(self, "wav"):
+            self.wav.coordinates.data[0, :] = solver.geometry.src_positions[:]
+
+        d = solver.jacobian(dmext, src=None if not hasattr(self, "wav") else self.wav)[0]
+        # d = solver.jacobian(src=None if not hasattr(self, "wav") else self.wav, **self.karguments)[0]
+        d = d.resample(solver.geometry.dt).data[:][: solver.geometry.nt].T
+        return d
+
+    def _born_allshots(self, dm: NDArray) -> NDArray:
+        """Born modelling for all shots
+
+        Parameters
+        -----------
+        dm : :obj:`np.ndarray`
+            Model perturbation
+
+        Returns
+        -------
+        dtot : :obj:`np.ndarray`
+            Data for all shots
+
+        """
+        # create geometry for single source
+        geometry = AcquisitionGeometry(
+            self.model,
+            self.geometry.rec_positions,
+            self.geometry.src_positions[0, :],
+            self.geometry.t0,
+            self.geometry.tn,
+            f0=self.geometry.f0,
+            src_type=self.geometry.src_type,
+        )
+
+        # create solver
+        solver = self._solver_type(
+            self.model,
+            geometry,
+            space_order=self.space_order,
+            kernel=self.kernel,
+            time_order=self.time_order,
+        )
+
+        nsrc = self.geometry.src_positions.shape[0]
+        dtot = []
+
+        for isrc in range(nsrc):
+            solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
+            d = self._born_oneshot(solver, dm)
+            dtot.append(d)
+        dtot = np.array(dtot).reshape(nsrc, d.shape[0], d.shape[1])
+        return dtot
 
     def _fwd_oneshot(self, solver: AcousticWaveSolver, v: NDArray) -> NDArray:
         """Forward modelling for one shot
@@ -1891,7 +1974,7 @@ class _ViscoAcousticWave(_Wave):
         )
 
         # solve
-        solver = ViscoacousticWaveSolver(
+        solver = self._solver_type(
             self.model,
             geometry,
             space_order=self.space_order,
@@ -1956,7 +2039,9 @@ class _ViscoAcousticWave(_Wave):
     def _register_multiplications(self, op_name: str) -> None:
         if op_name == "fwd":
             self._acoustic_matvec = self._fwd_allshots
-            self._acoustic_rmatvec = self._grad_allshots
+        if op_name == "born":
+            self._acoustic_matvec = self._born_allshots
+        self._acoustic_rmatvec = self._grad_allshots
 
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
@@ -1969,9 +2054,141 @@ class _ViscoAcousticWave(_Wave):
         return y
 
 
+class _ViscoMultiparameterWave(_ViscoAcousticWave):
+    _solver_type = ViscoacousticWaveSolverMulti
+
+    def _compute_dims(self, grid_shape):
+        # Determine the number of outputs based on the modeling type
+        _dims_table = {"fwd": 1, "born": 2}
+        if self.op_name not in _dims_table:
+            raise TypeError("Provided op_name '%s' is not valid" % self.op_name)
+
+        if _dims_table[self.op_name] == 1:
+            return grid_shape
+        else:
+            return (_dims_table[self.op_name], *grid_shape)
+
+    def _born_oneshot(self, solver: ViscoacousticWaveSolverMulti, data: NDArray) -> NDArray:
+        """Born modelling for one shot
+
+        Parameters
+        ----------
+        solver : :obj:`ViscoacousticWaveSolverMulti`
+            Devito's solver object.
+        data : :obj:`np.ndarray`
+            Contain dm and dtau
+
+            data[0] = dm
+            data[1] = dtau
+
+        Returns
+        -------
+        d : :obj:`np.ndarray`
+            Data
+
+        """
+        dmext = np.zeros(self.model.grid.shape, dtype=np.float32)
+        dtauext = np.zeros(self.model.grid.shape, dtype=np.float32)
+
+        nbl = self.model.nbl
+        slices = tuple(slice(nbl, -nbl) for _ in range(dmext.ndim))
+        dmext[slices] = data[0]
+        dtauext[slices] = data[1]
+
+        # assign source location to source object with custom wavelet
+        if hasattr(self, "wav"):
+            self.wav.coordinates.data[0, :] = solver.geometry.src_positions[:]
+
+        d = solver.jacobian(dmext, dtauext, src=None if not hasattr(self, "wav") else self.wav)[0]
+        # d = solver.jacobian(src=None if not hasattr(self, "wav") else self.wav, **self.karguments)[0]
+        d = d.resample(solver.geometry.dt).data[:][: solver.geometry.nt].T
+        return d
+
+    def _grad_oneshot(self, solver: ViscoacousticWaveSolverMulti, isrc, rec_data):
+
+        rec = self.geometry.rec.copy()
+        rec.data[:] = rec_data.T[:]
+
+        # source wavefield
+        if hasattr(self, "src_wavefield"):
+            p = self.src_wavefield[isrc]
+        else:
+            p = solver.forward(save=True)[1]
+
+        # adjoint modelling (reverse wavefield plus imaging condition)
+        grad_m, grad_tau, _ = solver.jacobian_adjoint(rec, p)
+
+        return grad_m, grad_tau
+
+    def _grad_allshots(self, rec_data: NDArray) -> NDArray:
+        # create geometry for single source
+        geometry = AcquisitionGeometry(
+            self.model,
+            self.geometry.rec_positions,
+            self.geometry.src_positions[0, :],
+            self.geometry.t0,
+            self.geometry.tn,
+            f0=self.geometry.f0,
+            src_type=self.geometry.src_type,
+        )
+
+        solver = ViscoacousticWaveSolverMulti(
+            self.model,
+            geometry,
+            space_order=self.space_order,
+            kernel=self.kernel,
+            time_order=self.time_order,
+        )
+
+        nsrc = self.geometry.src_positions.shape[0]
+        mtot = np.zeros((2, *self.model.shape), dtype=np.float32)
+
+        for isrc in range(nsrc):
+            solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
+            grad_m, grad_tau = self._grad_oneshot(solver, isrc, rec_data[isrc])
+            mtot[0] += self._crop_model(grad_m.data, self.model.nbl)
+            mtot[1] += self._crop_model(grad_tau.data, self.model.nbl)
+        return mtot
+
+    def _register_multiplications(self, op_name: str) -> None:
+        if op_name == "born":
+            self._viscoMulti_matvec = self._born_allshots
+        if op_name == "fwd":
+            self._viscoMulti_matvec = self._fwd_allshots
+        self._viscoMulti_rmatvec = self._grad_allshots
+
+    def adjoint(self):
+        """
+        If the direct modeling operation is forward, it is necessary to adapt the dimensions to make them
+        compatible with the gradient output.
+        """
+        # Check if the operator's name is 'fwd' to determine if forward modeling is being performed
+        if self.op_name == "fwd":
+            Op = deepcopy(self)
+            new_dims = (2, *Op.dims)
+            # Updates input dimensions to reflect the extra channel expected by the gradient output
+            Op._update_dimensions(new_dims, Op.dimsd)
+            return LinearOperator.adjoint(Op)
+        return LinearOperator.adjoint(self)
+
+    @reshaped
+    def _matvec(self, x: NDArray) -> NDArray:
+        y = self._viscoMulti_matvec(x)
+        return y
+
+    @reshaped
+    def _rmatvec(self, x: NDArray) -> NDArray:
+        y = self._viscoMulti_rmatvec(x)
+        return y
+
+    H: Callable[[LinearOperator], LinearOperator] = property(adjoint)
+
+
 AcousticWave2D = _AcousticWave
 AcousticWave3D = _AcousticWave
 ElasticWave2D = _ElasticWave
 ElasticWave3D = _ElasticWave
 ViscoAcousticWave2D = _ViscoAcousticWave
 ViscoAcousticWave3D = _ViscoAcousticWave
+MultiparameterViscoAcoustic2D = _ViscoMultiparameterWave
+MultiparameterViscoAcoustic3D = _ViscoMultiparameterWave
