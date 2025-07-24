@@ -2059,7 +2059,7 @@ class _ViscoMultiparameterWave(_ViscoAcousticWave):
 
     def _compute_dims(self, grid_shape):
         # Determine the number of outputs based on the modeling type
-        _dims_table = {"fwd": 1, "born":2}
+        _dims_table = {"fwd": 1, "born": 2}
         if self.op_name not in _dims_table:
             raise TypeError("Provided op_name '%s' is not valid" % self.op_name)
 
@@ -2170,7 +2170,7 @@ class _ViscoMultiparameterWave(_ViscoAcousticWave):
             Op._update_dimensions(new_dims, Op.dimsd)
             return LinearOperator.adjoint(Op)
         return LinearOperator.adjoint(self)
-    
+
     @reshaped
     def _matvec(self, x: NDArray) -> NDArray:
         y = self._viscoMulti_matvec(x)
@@ -2182,6 +2182,7 @@ class _ViscoMultiparameterWave(_ViscoAcousticWave):
         return y
 
     H: Callable[[LinearOperator], LinearOperator] = property(adjoint)
+
 
 AcousticWave2D = _AcousticWave
 AcousticWave3D = _AcousticWave
