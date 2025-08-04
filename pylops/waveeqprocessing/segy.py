@@ -4,16 +4,41 @@ import numpy as np
 from scipy.spatial import distance
 
 
-__all__ = ['ReadSEGY2D']
+__all__ = ['count_segy_shots', 'get_velocity_model', 'ReadSEGY2D']
 
+
+def count_segy_shots(segy_path, shotattr=segyio.TraceField.FieldRecord):
+    with segyio.open(segy_path, "r", ignore_geometry=True) as segyfile:
+        headers = segyfile.header
+        shotpoints = [trace[shotattr] for trace in headers]
+
+        shot_ids = set(shotpoints)
+        return len(shot_ids), list(shot_ids)
+
+def get_velocity_model(model_path):
+    """
+    Read velocity model from a SEGY file
+    """
+    f = segyio.open(model_path, iline=segyio.tracefield.TraceField.FieldRecord,
+                    xline=segyio.tracefield.TraceField.CDP)
+
+    xl, il, t = f.xlines, f.ilines, f.samples
+    if len(il) != 1:
+        dims = (len(xl), len(il), len(t))
+    else:
+        dims = (len(xl), len(t))
+
+    vp = f.trace.raw[:].reshape(dims)
+    return vp, dims
 
 class ReadSEGY2D():
 
-    def __init__(self, segy_path):
+    def __init__(self, segy_path, mpi=None):
 
         self.segyfile = segy_path
-        self.table, self.indexes = self.make_lookup_table(segy_path)
-        self.relative_distances = self._generate_relative_distances()
+        self.controller = mpi
+        self.table, self.indexes = self.make_lookup_table(segy_path, mpi)
+        #self.relative_distances = self._generate_relative_distances()
         self.isRecVariable = self._isRecVariable()
         self.nsrc = len(self.table)
 
@@ -29,7 +54,7 @@ class ReadSEGY2D():
         # If the lenght of the set is 1, means that all the shots has the same number os receivers
         return len(n_traces_per_shots) != 1
 
-    def make_lookup_table(self, sgy_file):
+    def make_lookup_table(self, sgy_file, mpi_controller):
         '''
         Make a lookup of shots, where the keys are the shot record IDs being
         searched (looked up)
@@ -41,7 +66,14 @@ class ReadSEGY2D():
         with segyio.open(sgy_file, ignore_geometry=True) as f:
             index = None
             pos_in_file = 0
+    
             for header in f.header:
+                index = header[segyio.TraceField.FieldRecord]
+                
+                if (mpi_controller and (index not in mpi_controller.shot_ids)):
+                    pos_in_file += 1
+                    continue                
+                
                 if int(header[segyio.TraceField.SourceGroupScalar]) < 0:
                     scalco = abs(1. / header[segyio.TraceField.SourceGroupScalar])
                 else:
@@ -52,7 +84,7 @@ class ReadSEGY2D():
                 # else:
                 #     scalel = header[segyio.TraceField.ElevationScalar]
                 # Check to see if we're in a new shot
-                index = header[segyio.TraceField.FieldRecord]
+                
                 if index not in lookup_table.keys():
                     indexes.append(index)
                     lookup_table[index] = {}
@@ -90,17 +122,7 @@ class ReadSEGY2D():
         """
         Read velocity model from a SEGY file
         """
-        f = segyio.open(path, iline=segyio.tracefield.TraceField.FieldRecord,
-                        xline=segyio.tracefield.TraceField.CDP)
-
-        xl, il, t = f.xlines, f.ilines, f.samples
-        if len(il) != 1:
-            dims = (len(xl), len(il), len(t))
-        else:
-            dims = (len(xl), len(t))
-
-        vp = f.trace.raw[:].reshape(dims)
-        return vp, dims
+        return get_velocity_model(path)
 
     def getSourceCoords(self, index=0):
         src_coords = np.array(self.table[index]['Source'])
