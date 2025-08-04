@@ -1285,7 +1285,7 @@ class _ElasticWave(_Wave):
             name="sig", grid=model.grid, space_order=space_order, time_order=1
         )
 
-        eqn = elastic_stencil(model, u, sig, forward=False, par="vp-vs-rho")
+        eqn = elastic_stencil(model, u, sig, forward=False, par=self.par)
 
         dt = dt_ref
         b = 1.0 / model.rho
