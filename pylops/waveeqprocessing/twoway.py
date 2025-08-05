@@ -48,6 +48,7 @@ if devito_message is None:
 
 MPIComm: TypeAlias = "mpi4py.MPI.Comm"
 
+
 class _CustomSource(PointSource):
     """Custom source
 
@@ -533,20 +534,21 @@ class _AcousticWave(_Wave):
         )
         self.checkpointing = checkpointing
         self.karguments = {}
-            
+
         if(segy_path):
-            if is_3d: raise Exception("3D segy reader not available yet")
-            
+            if is_3d:
+                raise Exception("3D segy reader not available yet")
+
             if segy_mpi:
                 nsx, shot_ids = count_segy_shots(segy_path)
-                nsy = 1 # 2D
+                nsy = 1  # 2D
                 controller = MPIShotsController(shape, nsx, nsy, nbl, segy_mpi, shot_ids=shot_ids)
                 self.mpi_controller = controller
-            
-            self.segyReader = ReadSEGY2D(segy_path, mpi=getattr(self, "mpi_controller", None)) 
-        
+
+            self.segyReader = ReadSEGY2D(segy_path, mpi=getattr(self, "mpi_controller", None))
+
         self.instant_reduce = mpi_instant_reduce
-        
+
         self._dswap_opt = {
             "dswap": dswap,
             "dswap_disks": dswap_disks,
@@ -829,7 +831,7 @@ class _AcousticWave(_Wave):
             solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
             m = self._bornadj_oneshot(solver, isrc, dobs[isrc])
             mtot += self._crop_model(m.data, self.model.nbl)
-        
+
         controller = getattr(self, "mpi_controller", None)
         if(controller and self.instant_reduce):
             return controller.build_result([mtot])[0]
@@ -1095,7 +1097,6 @@ class _ElasticWave(_Wave):
 
         self._register_multiplications(op_name)
 
-    
     def _crop_stencil(self, m):
         """Remove absorbing boundaries from model"""
         nbl = self.model.nbl
@@ -1104,7 +1105,7 @@ class _ElasticWave(_Wave):
             slices = tuple(slice(nbl, -nbl) for _ in range(stencil.ndim))
             cropped_stencils.append(stencil[slices])
         return np.array(cropped_stencils)
-    
+
     def _create_model(
         self,
         shape: InputDimsLike,
@@ -1513,7 +1514,7 @@ class _ElasticWave(_Wave):
         controller = kwargs.pop("mpi_controller", None)
         image = self._imaging_allshots(recs, **kwargs)
         cropped_image = self._crop_stencil(image)
-        
+
         if (controller):
             return controller.build_result(cropped_image)
         else:
