@@ -9,8 +9,7 @@ __all__ = [
 
 import logging
 from copy import deepcopy
-from typing import Tuple, Union, TypeAlias
-
+from typing import Tuple, Union, TypeVar
 import numpy as np
 
 from pylops import LinearOperator
@@ -46,7 +45,7 @@ if devito_message is None:
     from examples.seismic.utils import PointSource, sources
     from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
 
-MPIComm: TypeAlias = "mpi4py.MPI.Comm"
+MPIComm = TypeVar("mpi4py.MPI.Comm")
 
 
 class _CustomSource(PointSource):
@@ -535,7 +534,7 @@ class _AcousticWave(_Wave):
         self.checkpointing = checkpointing
         self.karguments = {}
 
-        if(segy_path):
+        if (segy_path):
             if is_3d:
                 raise Exception("3D segy reader not available yet")
 
@@ -833,7 +832,7 @@ class _AcousticWave(_Wave):
             mtot += self._crop_model(m.data, self.model.nbl)
 
         controller = getattr(self, "mpi_controller", None)
-        if(controller and self.instant_reduce):
+        if (controller and self.instant_reduce):
             return controller.build_result([mtot])[0]
         else:
             return mtot

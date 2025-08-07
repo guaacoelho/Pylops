@@ -1,7 +1,6 @@
 import segyio
 
 import numpy as np
-from scipy.spatial import distance
 
 
 __all__ = ['count_segy_shots', 'get_velocity_model', 'ReadSEGY2D']
@@ -40,7 +39,6 @@ class ReadSEGY2D():
         self.segyfile = segy_path
         self.controller = mpi
         self.table, self.indexes = self.make_lookup_table(segy_path, mpi)
-        # self.relative_distances = self._generate_relative_distances()
         self.isRecVariable = self._isRecVariable()
         self.nsrc = len(self.table)
 
@@ -102,24 +100,6 @@ class ReadSEGY2D():
 
         return lookup_table, indexes
 
-    def _generate_relative_distances(self):
-        # Retorna o menor valor de X e o valor de Y correspondente a esse receptor ou fonte
-        minCoords = self.getMinXWithY()
-
-        relative_dist = {minCoords[0]: 0.}
-        for ii in self.indexes:
-            # pega as coordenadas
-            src_coords, rec_coords = self.getCoords(ii)
-            x_all = np.concatenate((rec_coords[0], src_coords[0]))
-            y_all = np.concatenate((rec_coords[1], src_coords[1]))
-
-            for coordx, coordy in zip(x_all, y_all):
-                if coordx in relative_dist:
-                    continue
-                coords = (coordx, coordy)
-                relative_dist[coordx] = distance.euclidean(coords, minCoords)
-        return relative_dist
-
     def getVelocityModel(self, path):
         """
         Read velocity model from a SEGY file
@@ -145,18 +125,6 @@ class ReadSEGY2D():
         src_coords = self.getSourceCoords(index)
 
         return src_coords, rec_coords
-
-    def getRelativeCoords(self, index):
-        src_coords, rec_coords = self.getCoords(index=index)
-
-        new_rx = np.zeros((rec_coords[0].size,))
-        new_rz = np.zeros((rec_coords[1].size,))
-        for idx, coord in enumerate(rec_coords[0]):
-            new_rx[idx] = self.relative_distances[coord]
-
-        new_sx = np.array(self.relative_distances[src_coords[0][0]])
-        new_sz = np.zeros((1,))
-        return (new_sx, new_sz), (new_rx, new_rz)
 
     def getTn(self):
         with segyio.open(self.segyfile, "r", ignore_geometry=True) as f:
@@ -204,29 +172,3 @@ class ReadSEGY2D():
             minY = min(minY, np.min(src_coords[1]), np.min(rec_coords[1]))
 
         return minX, minY
-
-    def getMinXWithY(self):
-        """
-        Retorna o menor valor de X entre fontes e receptores,
-        junto com o valor de Y correspondente (mesmo índice).
-        """
-        minX = np.inf
-        correspondingY = None
-
-        for isrc in self.indexes:
-            src_coords, rec_coords = self.getCoords(isrc)
-
-            # Combina fontes e receptores
-            x_all = np.concatenate((src_coords[0], rec_coords[0]))
-            y_all = np.concatenate((src_coords[1], rec_coords[1]))
-
-            # Encontra o menor X e o índice correspondente
-            local_min_idx = np.argmin(x_all)
-            local_minX = x_all[local_min_idx]
-
-            # Se for menor que o atual mínimo, atualiza
-            if local_minX < minX:
-                minX = local_minX
-                correspondingY = y_all[local_min_idx]
-
-        return minX, correspondingY
