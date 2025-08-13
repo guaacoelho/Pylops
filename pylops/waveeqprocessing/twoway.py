@@ -502,6 +502,7 @@ class _AcousticWave(_Wave):
         dt: int = None,
         segy_path: str = None,
         segy_mpi: MPIComm = None,
+        segy_sample: Union[int, float] = None,
         mpi_instant_reduce: bool = False,
         dswap: bool = False,
         dswap_disks: int = 1,
@@ -540,13 +541,27 @@ class _AcousticWave(_Wave):
             if is_3d:
                 raise Exception("3D segy reader not available yet")
 
+            nshots, shot_ids = count_segy_shots(segy_path)
+            nsy = 1  # 2D
+
+            sample = segy_sample or nshots
+            if sample <= 0 or sample > nshots:
+                raise Exception("segy sample must be between (0," + str(nshots) + "]")
+            elif sample >= 1:
+                # Straight number of samples
+                sample = int(sample)
+            else:
+                # Percentage
+                sample = int(nshots * sample)
+
+            idxs = np.linspace(0, nshots - 1, num=sample, dtype=int)
+            sampled_sids = [shot_ids[i] for i in idxs]
+
             if segy_mpi:
-                nsx, shot_ids = count_segy_shots(segy_path)
-                nsy = 1  # 2D
-                controller = MPIShotsController(shape, nsx, nsy, nbl, segy_mpi, shot_ids=shot_ids)
+                controller = MPIShotsController(shape, sample, nsy, nbl, segy_mpi, shot_ids=sampled_sids)
                 self.mpi_controller = controller
 
-            self.segyReader = ReadSEGY2D(segy_path, mpi=getattr(self, "mpi_controller", None))
+            self.segyReader = ReadSEGY2D(segy_path, mpi=getattr(self, "mpi_controller", None), shot_ids=sampled_sids)
 
         self.instant_reduce = mpi_instant_reduce
 

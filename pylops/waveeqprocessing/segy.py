@@ -34,11 +34,11 @@ def get_velocity_model(model_path):
 
 class ReadSEGY2D():
 
-    def __init__(self, segy_path, mpi=None):
+    def __init__(self, segy_path, mpi=None, shot_ids=None):
 
         self.segyfile = segy_path
         self.controller = mpi
-        self.table, self.indexes = self.make_lookup_table(segy_path, mpi)
+        self.table, self.indexes = self.make_lookup_table(segy_path, mpi, shot_ids)
         self.isRecVariable = self._isRecVariable()
         self.nsrc = len(self.table)
 
@@ -54,7 +54,7 @@ class ReadSEGY2D():
         # If the lenght of the set is 1, means that all the shots has the same number os receivers
         return len(n_traces_per_shots) != 1
 
-    def make_lookup_table(self, sgy_file, mpi_controller):
+    def make_lookup_table(self, sgy_file, mpi_controller, sampled_ids):
         '''
         Make a lookup of shots, where the keys are the shot record IDs being
         searched (looked up)
@@ -63,6 +63,9 @@ class ReadSEGY2D():
         '''
         indexes = []
         lookup_table = {}
+
+        samples = sampled_ids if not mpi_controller else mpi_controller.shot_ids
+
         with segyio.open(sgy_file, ignore_geometry=True) as f:
             index = None
             pos_in_file = 0
@@ -70,7 +73,7 @@ class ReadSEGY2D():
             for header in f.header:
                 index = header[segyio.TraceField.FieldRecord]
 
-                if (mpi_controller and (index not in mpi_controller.shot_ids)):
+                if (samples and (index not in samples)):
                     pos_in_file += 1
                     continue
 
