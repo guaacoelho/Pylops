@@ -1334,7 +1334,8 @@ class _ElasticWave(_Wave):
             name="sig", grid=model.grid, space_order=space_order, time_order=1
         )
 
-        eqn = elastic_stencil(model, u, sig, forward=False, par=self.par)
+        eqn = elastic_stencil(model, u, sig, forward=False,
+                              par=self.karguments.get("par", self.par))
 
         dt = dt_ref
         b = 1.0 / model.rho
@@ -1450,7 +1451,8 @@ class _ElasticWave(_Wave):
             vfields.update({"rec_vy": rec_vy})
 
         if solver:
-            v0 = solver.forward(save=True if not self._dswap_opt["dswap"] else False)[
+            v0 = solver.forward(par=self.karguments.get("par", self.par),
+                                save=True if not self._dswap_opt["dswap"] else False)[
                 dim + 1
             ]
         else:
