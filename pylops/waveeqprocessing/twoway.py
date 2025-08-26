@@ -171,22 +171,16 @@ class _Wave(LinearOperator, PhysicalPropertiesMixin):
             Method representing how the data will be filled up to the total nt.
             - padding
             - resample
-            - dual -> padding and resample
-            padding up to max_padding and finalize with resample
 
         """
         wav = wav.reshape(-1)
-        if method not in {"padding", "resample", "dual"}:
-            raise ValueError(f"Invalid method '{method}'. Supported methods are 'padding', 'resample', 'dual'.")
+        if method not in {"padding", "resample"}:
+            raise ValueError(f"Invalid method '{method}'. Supported methods are 'padding', 'resample'.")
 
         if method == "padding":
             wav_data = np.pad(wav, (0, self.geometry.nt - len(wav)))
         elif method == "resample":
             wav_data = self.resample(wav, self.geometry.nt)
-        elif method == "dual":
-            max_padding = max_padding if max_padding else self.geometry.nt
-            wav_data = np.pad(wav, (0, max_padding - len(wav)))
-            wav_data = self.resample(wav_data, self.geometry.nt)
 
         self.wav = _CustomSource(
             name="src",
@@ -396,7 +390,7 @@ class _Wave(LinearOperator, PhysicalPropertiesMixin):
         nsteps = data.shape[0]
 
         time_range = TimeAxis(start=self.geometry.time_axis.start, stop=self.geometry.time_axis.stop, num=nsteps)
-        new_data = np.zeros(( num), dtype=np.float32)
+        new_data = np.zeros((num), dtype=np.float32)
 
         src = PointSource(name='src', grid=self.model.grid, npoint=1, time_range=time_range)
         src.data[:] = data[:].reshape(-1, 1)
