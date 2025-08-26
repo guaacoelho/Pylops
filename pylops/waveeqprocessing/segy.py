@@ -1,19 +1,44 @@
 import segyio
 
 import numpy as np
-from scipy.spatial import distance
 
 
-__all__ = ['ReadSEGY2D']
+__all__ = ['count_segy_shots', 'get_velocity_model', 'ReadSEGY2D']
+
+
+def count_segy_shots(segy_path, shotattr=segyio.TraceField.FieldRecord):
+    with segyio.open(segy_path, "r", ignore_geometry=True) as segyfile:
+        headers = segyfile.header
+        shotpoints = [trace[shotattr] for trace in headers]
+
+        shot_ids = set(shotpoints)
+        return len(shot_ids), list(shot_ids)
+
+
+def get_velocity_model(model_path):
+    """
+    Read velocity model from a SEGY file
+    """
+    f = segyio.open(model_path, iline=segyio.tracefield.TraceField.FieldRecord,
+                    xline=segyio.tracefield.TraceField.CDP)
+
+    xl, il, t = f.xlines, f.ilines, f.samples
+    if len(il) != 1:
+        dims = (len(xl), len(il), len(t))
+    else:
+        dims = (len(xl), len(t))
+
+    vp = f.trace.raw[:].reshape(dims)
+    return vp, dims
 
 
 class ReadSEGY2D():
 
-    def __init__(self, segy_path):
+    def __init__(self, segy_path, mpi=None, shot_ids=None):
 
         self.segyfile = segy_path
-        self.table, self.indexes = self.make_lookup_table(segy_path)
-        self.relative_distances = self._generate_relative_distances()
+        self.controller = mpi
+        self.table, self.indexes = self.make_lookup_table(segy_path, mpi, shot_ids)
         self.isRecVariable = self._isRecVariable()
         self.nsrc = len(self.table)
 
@@ -29,7 +54,7 @@ class ReadSEGY2D():
         # If the lenght of the set is 1, means that all the shots has the same number os receivers
         return len(n_traces_per_shots) != 1
 
-    def make_lookup_table(self, sgy_file):
+    def make_lookup_table(self, sgy_file, mpi_controller, sampled_ids):
         '''
         Make a lookup of shots, where the keys are the shot record IDs being
         searched (looked up)
@@ -38,10 +63,20 @@ class ReadSEGY2D():
         '''
         indexes = []
         lookup_table = {}
+
+        samples = sampled_ids if not mpi_controller else mpi_controller.shot_ids
+
         with segyio.open(sgy_file, ignore_geometry=True) as f:
             index = None
             pos_in_file = 0
+
             for header in f.header:
+                index = header[segyio.TraceField.FieldRecord]
+
+                if (samples and (index not in samples)):
+                    pos_in_file += 1
+                    continue
+
                 if int(header[segyio.TraceField.SourceGroupScalar]) < 0:
                     scalco = abs(1. / header[segyio.TraceField.SourceGroupScalar])
                 else:
@@ -52,7 +87,7 @@ class ReadSEGY2D():
                 # else:
                 #     scalel = header[segyio.TraceField.ElevationScalar]
                 # Check to see if we're in a new shot
-                index = header[segyio.TraceField.FieldRecord]
+
                 if index not in lookup_table.keys():
                     indexes.append(index)
                     lookup_table[index] = {}
@@ -68,39 +103,11 @@ class ReadSEGY2D():
 
         return lookup_table, indexes
 
-    def _generate_relative_distances(self):
-        # Retorna o menor valor de X e o valor de Y correspondente a esse receptor ou fonte
-        minCoords = self.getMinXWithY()
-
-        relative_dist = {minCoords[0]: 0.}
-        for ii in self.indexes:
-            # pega as coordenadas
-            src_coords, rec_coords = self.getCoords(ii)
-            x_all = np.concatenate((rec_coords[0], src_coords[0]))
-            y_all = np.concatenate((rec_coords[1], src_coords[1]))
-
-            for coordx, coordy in zip(x_all, y_all):
-                if coordx in relative_dist:
-                    continue
-                coords = (coordx, coordy)
-                relative_dist[coordx] = distance.euclidean(coords, minCoords)
-        return relative_dist
-
     def getVelocityModel(self, path):
         """
         Read velocity model from a SEGY file
         """
-        f = segyio.open(path, iline=segyio.tracefield.TraceField.FieldRecord,
-                        xline=segyio.tracefield.TraceField.CDP)
-
-        xl, il, t = f.xlines, f.ilines, f.samples
-        if len(il) != 1:
-            dims = (len(xl), len(il), len(t))
-        else:
-            dims = (len(xl), len(t))
-
-        vp = f.trace.raw[:].reshape(dims)
-        return vp, dims
+        return get_velocity_model(path)
 
     def getSourceCoords(self, index=0):
         src_coords = np.array(self.table[index]['Source'])
@@ -121,18 +128,6 @@ class ReadSEGY2D():
         src_coords = self.getSourceCoords(index)
 
         return src_coords, rec_coords
-
-    def getRelativeCoords(self, index):
-        src_coords, rec_coords = self.getCoords(index=index)
-
-        new_rx = np.zeros((rec_coords[0].size,))
-        new_rz = np.zeros((rec_coords[1].size,))
-        for idx, coord in enumerate(rec_coords[0]):
-            new_rx[idx] = self.relative_distances[coord]
-
-        new_sx = np.array(self.relative_distances[src_coords[0][0]])
-        new_sz = np.zeros((1,))
-        return (new_sx, new_sz), (new_rx, new_rz)
 
     def getTn(self):
         with segyio.open(self.segyfile, "r", ignore_geometry=True) as f:
@@ -180,29 +175,3 @@ class ReadSEGY2D():
             minY = min(minY, np.min(src_coords[1]), np.min(rec_coords[1]))
 
         return minX, minY
-
-    def getMinXWithY(self):
-        """
-        Retorna o menor valor de X entre fontes e receptores,
-        junto com o valor de Y correspondente (mesmo índice).
-        """
-        minX = np.inf
-        correspondingY = None
-
-        for isrc in self.indexes:
-            src_coords, rec_coords = self.getCoords(isrc)
-
-            # Combina fontes e receptores
-            x_all = np.concatenate((src_coords[0], rec_coords[0]))
-            y_all = np.concatenate((src_coords[1], rec_coords[1]))
-
-            # Encontra o menor X e o índice correspondente
-            local_min_idx = np.argmin(x_all)
-            local_minX = x_all[local_min_idx]
-
-            # Se for menor que o atual mínimo, atualiza
-            if local_minX < minX:
-                minX = local_minX
-                correspondingY = y_all[local_min_idx]
-
-        return minX, correspondingY

@@ -9,7 +9,7 @@ __all__ = [
 
 import logging
 from copy import deepcopy
-from typing import Tuple, Union, Callable
+from typing import Tuple, Union, TypeVar, Callable
 
 import numpy as np
 
@@ -17,8 +17,9 @@ from pylops import LinearOperator
 from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
+from pylops.utils.twowaympi import MPIShotsController
 from pylops.waveeqprocessing._propertiesmixin import PhysicalPropertiesMixin
-from pylops.waveeqprocessing.segy import ReadSEGY2D
+from pylops.waveeqprocessing.segy import ReadSEGY2D, count_segy_shots
 
 devito_message = deps.devito_import("the twoway module")
 
@@ -45,6 +46,8 @@ if devito_message is None:
     from examples.seismic.utils import PointSource, sources
     from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
     from examples.seismic.multiparameter.viscoacoustic import ViscoacousticWaveSolver as ViscoacousticWaveSolverMulti
+
+MPIComm = TypeVar("mpi4py.MPI.Comm")
 
 
 class _CustomSource(PointSource):
@@ -498,6 +501,9 @@ class _AcousticWave(_Wave):
         rec_y: NDArray = None,
         dt: int = None,
         segy_path: str = None,
+        segy_mpi: MPIComm = None,
+        segy_sample: Union[int, float] = None,
+        mpi_instant_reduce: bool = False,
         dswap: bool = False,
         dswap_disks: int = 1,
         dswap_folder: str = None,
@@ -505,6 +511,7 @@ class _AcousticWave(_Wave):
         dswap_compression: str = None,
         dswap_compression_value: float | int = None,
         dswap_verbose: bool = False,
+
     ) -> None:
         if devito_message is not None:
             raise NotImplementedError(devito_message)
@@ -529,7 +536,35 @@ class _AcousticWave(_Wave):
         )
         self.checkpointing = checkpointing
         self.karguments = {}
-        self.segyReader = ReadSEGY2D(segy_path) if segy_path else None
+
+        if (segy_path):
+            if is_3d:
+                raise Exception("3D segy reader not available yet")
+
+            nshots, shot_ids = count_segy_shots(segy_path)
+            nsy = 1  # 2D
+
+            sample = segy_sample or nshots
+            if sample <= 0 or sample > nshots:
+                raise Exception("segy sample must be between (0," + str(nshots) + "]")
+            elif sample >= 1:
+                # Straight number of samples
+                sample = int(sample)
+            else:
+                # Percentage
+                sample = int(nshots * sample)
+
+            idxs = np.linspace(0, nshots - 1, num=sample, dtype=int)
+            sampled_sids = [shot_ids[i] for i in idxs]
+
+            if segy_mpi:
+                controller = MPIShotsController(shape, sample, nsy, nbl, segy_mpi, shot_ids=sampled_sids)
+                self.mpi_controller = controller
+
+            self.segyReader = ReadSEGY2D(segy_path, mpi=getattr(self, "mpi_controller", None), shot_ids=sampled_sids)
+
+        self.instant_reduce = mpi_instant_reduce
+
         self._dswap_opt = {
             "dswap": dswap,
             "dswap_disks": dswap_disks,
@@ -812,7 +847,12 @@ class _AcousticWave(_Wave):
             solver.geometry.src_positions = self.geometry.src_positions[isrc, :]
             m = self._bornadj_oneshot(solver, isrc, dobs[isrc])
             mtot += self._crop_model(m.data, self.model.nbl)
-        return mtot
+
+        controller = getattr(self, "mpi_controller", None)
+        if (controller and self.instant_reduce):
+            return controller.build_result([mtot])[0]
+        else:
+            return mtot
 
     def _fwd_oneshot(self, solver: AcousticWaveSolver, v: NDArray) -> NDArray:
         """Forward modelling for one shot
@@ -1072,6 +1112,15 @@ class _ElasticWave(_Wave):
         }
 
         self._register_multiplications(op_name)
+
+    def _crop_stencil(self, m):
+        """Remove absorbing boundaries from model"""
+        nbl = self.model.nbl
+        cropped_stencils = []
+        for stencil in m:
+            slices = tuple(slice(nbl, -nbl) for _ in range(stencil.ndim))
+            cropped_stencils.append(stencil[slices])
+        return np.array(cropped_stencils)
 
     def _create_model(
         self,
@@ -1482,11 +1531,12 @@ class _ElasticWave(_Wave):
     def rtm(self, recs: NDArray, **kwargs) -> NDArray:
         controller = kwargs.pop("mpi_controller", None)
         image = self._imaging_allshots(recs, **kwargs)
+        cropped_image = self._crop_stencil(image)
 
         if (controller):
-            return controller.build_image(image)
+            return controller.build_result(cropped_image)
         else:
-            return image
+            return cropped_image
 
     def _grad_oneshot(self, isrc, dobs, solver: GenericElasticWaveSolver):
         """Adjoint gradient modelling for one shot

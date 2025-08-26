@@ -7,3 +7,4 @@ from .metrics import *
 from .multiproc import *
 from .utils import *
 from .typing import *
+from .twowaympi import *
