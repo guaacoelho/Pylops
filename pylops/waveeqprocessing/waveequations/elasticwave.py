@@ -1,7 +1,6 @@
 import logging
 from copy import deepcopy
 from typing import TypeVar, Union
-from wave import _Wave
 
 import numpy as np
 
@@ -9,6 +8,8 @@ from pylops import LinearOperator
 from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
+
+from .wave import _Wave
 
 devito_message = deps.devito_import("the twoway module")
 
@@ -24,6 +25,7 @@ if devito_message is None:
     )
     from devito.builtins import initialize_function
 
+    from examples.seismic import AcquisitionGeometry
     from examples.seismic.stiffness import (
         ElasticModel,
         GenericElasticWaveSolver,

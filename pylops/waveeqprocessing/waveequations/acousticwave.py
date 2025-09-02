@@ -1,5 +1,4 @@
 from typing import Callable, Tuple, TypeVar, Union
-from wave import _Wave
 
 import numpy as np
 
@@ -8,6 +7,8 @@ from pylops.utils.decorators import reshaped
 from pylops.utils.twowaympi import MPIShotsController
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
 from pylops.waveeqprocessing.segy import ReadSEGY2D, count_segy_shots
+
+from .wave import _Wave
 
 devito_message = deps.devito_import("the twoway module")
 

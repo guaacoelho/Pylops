@@ -7,9 +7,12 @@ __all__ = [
     "ViscoAcousticWave3D",
 ]
 
-from waveequations.acousticwave import _AcousticWave
-from waveequations.elasticwave import _ElasticWave
-from waveequations.viscoacousticwave import _ViscoAcousticWave, _ViscoMultiparameterWave
+from .waveequations.acousticwave import _AcousticWave
+from .waveequations.elasticwave import _ElasticWave
+from .waveequations.viscoacousticwave import (
+    _ViscoAcousticWave,
+    _ViscoMultiparameterWave,
+)
 
 AcousticWave2D = _AcousticWave
 AcousticWave3D = _AcousticWave
