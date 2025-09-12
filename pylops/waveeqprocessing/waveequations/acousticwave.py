@@ -1,4 +1,4 @@
-from typing import Callable, Tuple, TypeVar, Union
+from typing import Tuple, TypeVar, Union
 
 import numpy as np
 
@@ -7,8 +7,7 @@ from pylops.utils.decorators import reshaped
 from pylops.utils.twowaympi import MPIShotsController
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
 from pylops.waveeqprocessing.segy import ReadSEGY2D, count_segy_shots
-
-from .wave import _Wave
+from pylops.waveeqprocessing.twoway import _Wave
 
 devito_message = deps.devito_import("the twoway module")
 
@@ -552,3 +551,7 @@ class _AcousticWave(_Wave):
     def _rmatvec(self, x: NDArray) -> NDArray:
         y = self._acoustic_rmatvec(x)
         return y
+
+
+AcousticWave2D = _AcousticWave
+AcousticWave3D = _AcousticWave

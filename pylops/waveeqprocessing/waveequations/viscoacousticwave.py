@@ -7,8 +7,7 @@ from pylops import LinearOperator
 from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
-
-from .wave import _Wave
+from pylops.waveeqprocessing.twoway import _Wave
 
 devito_message = deps.devito_import("the twoway module")
 
@@ -562,3 +561,9 @@ class _ViscoMultiparameterWave(_ViscoAcousticWave):
         return y
 
     H: Callable[[LinearOperator], LinearOperator] = property(adjoint)
+
+
+ViscoAcousticWave2D = _ViscoAcousticWave
+ViscoAcousticWave3D = _ViscoAcousticWave
+MultiparameterViscoAcoustic2D = _ViscoMultiparameterWave
+MultiparameterViscoAcoustic3D = _ViscoMultiparameterWave
