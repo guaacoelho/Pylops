@@ -15,7 +15,7 @@ if devito_message is None:
     from devito import Function
     from devito.builtins import initialize_function
 
-    from examples.seismic import AcquisitionGeometry, Model, Receiver
+    from examples.seismic import AcquisitionGeometry, Model
     from examples.seismic.acoustic import AcousticWaveSolver
     from examples.seismic.multiparameter.viscoacoustic import (
         ViscoacousticWaveSolver as ViscoacousticWaveSolverMulti,
