@@ -39,6 +39,7 @@ from .oneway import *
 from .seismicinterpolation import *
 from .twoway import *
 from .wavedecomposition import *
+from . import waveequations
 
 __all__ = [
     "MDC",
