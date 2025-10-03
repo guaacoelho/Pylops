@@ -157,7 +157,7 @@ class _ViscoAcousticWave(_Wave):
         self.time_order = time_order
         self.karguments = {}
         self.op_name = op_name
-        
+
         if (segy_path):
             if is_3d:
                 raise Exception("3D segy reader not available yet")
@@ -185,7 +185,7 @@ class _ViscoAcousticWave(_Wave):
             self.segyReader = ReadSEGY2D(segy_path, mpi=getattr(self, "mpi_controller", None), shot_ids=sampled_sids)
 
         self.instant_reduce = mpi_instant_reduce
-        
+
         dims = self._compute_dims(vp.shape)
 
         super().__init__(
