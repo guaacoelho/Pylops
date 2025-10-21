@@ -286,11 +286,10 @@ class _Wave(LinearOperator, PhysicalPropertiesMixin):
 
         For now, it only works for 2D operatores.
         """
-        
+
         new_rec_positions = np.zeros((nrecs, len(recs)))
         for i, rec_d, in enumerate(recs):
             new_rec_positions[:, i] = rec_d
-
 
         new_src_positions = np.zeros((1, len(srcs)))
         for i, src_d, in enumerate(srcs):

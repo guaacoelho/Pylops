@@ -243,15 +243,14 @@ class ReadSEGY3D():
                     lookup_table[index]['Receivers'] = []
                 else:  # Not in a new shot, so increase the number of traces in the shot by 1
                     lookup_table[index]['Num_Traces'] += 1
-                
+
                 lookup_table[index]['Receivers'].append((header[segyio.TraceField.GroupX] * scalco,
                                                          header[segyio.TraceField.GroupY] * scalco,
                                                          header[segyio.TraceField.ReceiverGroupElevation] * scalco))
                 pos_in_file += 1
 
         return lookup_table, indexes
-    
-    
+
     def _isRecVariable(self):
         """
         Verify if the number of receivers per shots is Regular.
@@ -263,7 +262,7 @@ class ReadSEGY3D():
 
         # If the lenght of the set is 1, means that all the shots has the same number os receivers
         return len(n_traces_per_shots) != 1
-    
+
     def getSourceCoords(self, index=0):
         src_coords = np.array(self.table[index]['Source'])
         sx = np.array([src_coords[0]])
@@ -285,7 +284,7 @@ class ReadSEGY3D():
         src_coords = self.getSourceCoords(index)
 
         return src_coords, rec_coords
-    
+
     def getTn(self):
         with segyio.open(self.segyfile, "r", ignore_geometry=True) as f:
             num_samples = len(f.samples)
@@ -297,7 +296,7 @@ class ReadSEGY3D():
         with segyio.open(self.segyfile, "r", ignore_geometry=True) as f:
             dt = f.bin[segyio.BinField.Interval]  # microseconds
         return dt / 1000  # return in miliseconds
-    
+
     def getData(self, index: int):
         """
         Return the data from a specific index. It need to add a dimension to match returned data from _Wave
@@ -318,7 +317,7 @@ class ReadSEGY3D():
             for ii, trace in enumerate(shot_traces):
                 retrieved_shot[:, ii] = trace
         return retrieved_shot
-    
+
     def getMinCoords(self):
         """
         Get the origin of the survey. It is the minimum value of the source and receiver coordinates
