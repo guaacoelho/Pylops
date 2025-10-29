@@ -103,6 +103,16 @@ class ReadSEGY2D():
 
         return lookup_table, indexes
 
+    def getsourceData(self, path):
+        """
+        Read source data from a SEGY file
+        """
+        f = segyio.open(path, iline=segyio.tracefield.TraceField.FieldRecord,
+                        xline=segyio.tracefield.TraceField.CDP)
+
+        src_data = f.trace.raw[:]
+        return src_data
+
     def getVelocityModel(self, path):
         """
         Read velocity model from a SEGY file
