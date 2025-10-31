@@ -354,7 +354,7 @@ class _ViscoAcousticWave(_Wave):
 
         # add vp to karguments to be used inside devito's solver
         self.karguments.update({"vp": function})
-        d = solver.forward(**self.karguments)[0]
+        d = solver.forward(**self.karguments, src=None if not hasattr(self, "wav") else self.wav)[0]
         d = d.resample(solver.geometry.dt).data[:][: solver.geometry.nt].T
         return d
 
@@ -410,7 +410,7 @@ class _ViscoAcousticWave(_Wave):
         if hasattr(self, "src_wavefield"):
             p = self.src_wavefield[isrc]
         else:
-            p = solver.forward(save=True)[1]
+            p = solver.forward(save=True, src=None if not hasattr(self, "wav") else self.wav)[1]
 
         # adjoint modelling (reverse wavefield plus imaging condition)
         grad, _ = solver.jacobian_adjoint(rec, p)
