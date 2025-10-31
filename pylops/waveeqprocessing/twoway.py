@@ -381,10 +381,10 @@ class _Wave(LinearOperator, PhysicalPropertiesMixin):
 
         new_time_range = TimeAxis(start=self.geometry.time_axis.start, stop=self.geometry.time_axis.stop, num=num)
         new_traces = np.zeros((nshots, ntraces, num), dtype=np.float32)
-        for shot_id in range(nshots):     
+        for shot_id in range(nshots):
             for i in range(ntraces):
                 tck = interpolate.splrep(time_range.time_values,
-                                        data[shot_id, i, :], k=3)
+                                         data[shot_id, i, :], k=3)
                 new_traces[shot_id, i] = interpolate.splev(new_time_range.time_values, tck)
 
         return new_traces
