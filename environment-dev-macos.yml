@@ -1,0 +1,40 @@
+name: pylops
+channels:
+  - defaults
+  - conda-forge
+  - numba
+  - pytorch
+dependencies:
+  - pip
+  - numpy>=1.21.0,<2.0.0
+  - scipy>=1.11.0
+  - pytorch>=1.2.0
+  - cpuonly
+  - pyfftw
+  - pywavelets
+  - sympy
+  - matplotlib
+  - ipython
+  - pytest
+  - Sphinx
+  - numpydoc
+  - numba
+  - pre-commit
+  - autopep8
+  - isort
+  - black
+  - mpi4py
+  - pip:
+    - devito
+    - dtcwt
+    - scikit-fmm
+    - spgl1
+    - pytest-runner
+    - setuptools_scm
+    - pydata-sphinx-theme
+    - sphinx-gallery
+    - nbsphinx
+    - image
+    - flake8
+    - mypy
+    - segyio

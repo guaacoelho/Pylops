@@ -5,7 +5,6 @@ channels:
   - numba
   - pytorch
 dependencies:
-  - python>=3.6.4
   - pip
   - numpy>=1.21.0,<2.0.0
   - scipy>=1.11.0
@@ -20,11 +19,13 @@ dependencies:
   - Sphinx
   - numpydoc
   - numba
-  - icc_rt
   - pre-commit
   - autopep8
   - isort
   - black
+  - mpi4py
+  - icc_rt
+  - segyio
   - pip:
     - devito
     - dtcwt

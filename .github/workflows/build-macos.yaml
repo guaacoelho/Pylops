@@ -1,0 +1,78 @@
+# NOTE:
+# Pytest is temporarily disabled on macOS due to numerical
+# instability in several operators.
+# Linux CI remains stable.
+
+name: PyLops
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    if: false
+    strategy:
+      matrix:
+        platform: [ macos-15, macos-26, ]
+        python-version: ["3.10", "3.11", "3.12"]
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # necessário para setuptools_scm
+
+      # =========================
+      # System deps
+      # =========================
+      - name: Install system deps
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install gcc open-mpi
+
+      - name: Export Homebrew paths
+        if: runner.os == 'macOS'
+        run: |
+          echo "/opt/homebrew/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/sbin" >> $GITHUB_PATH
+
+      # ------------------------------------------------------------
+      # Conda
+      # ------------------------------------------------------------
+      - name: Setting up conda
+        uses: mamba-org/setup-micromamba@v1
+        with:
+          environment-file: environment-dev-macos.yml
+          extra-specs: |
+            python=${{ matrix.python-version }}
+          cache-environment: true
+          init-shell: bash
+
+      # =========================
+      # PyLops
+      # =========================
+      - name: Install pylops (local)
+        run: |
+          micromamba run -n pylops pip install .
+
+      # =========================
+      # Devito
+      # =========================
+      - name: Install GeoSymCodes Devito
+        run: |
+          micromamba run -n pylops pip install git+https://github.com/GeoSymCodes/devito.git packaging
+
+      # =========================
+      # Fixing numpy version
+      # =========================
+      - name: Fixing numpy version
+        run: |
+          micromamba run -n pylops pip install numpy==1.26.3 segyio
+
+      # =========================
+      # Testing Pylops
+      # =========================
+      - name: Test with pytest
+        run: |
+          micromamba run -n pylops pytest
