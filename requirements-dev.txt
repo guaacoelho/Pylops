@@ -1,15 +1,12 @@
-numpy>=1.21.0,<2.0.0
-scipy>=1.11.0
---extra-index-url https://download.pytorch.org/whl/cpu
-torch>=1.2.0
+jax
 numba
-pyfftw
 PyWavelets
 spgl1
 scikit-fmm
-sympy
+sympy==1.13.1
 devito
 dtcwt
+astra-toolbox>=2.2.0
 matplotlib
 ipython
 pytest
@@ -17,8 +14,10 @@ pytest-runner
 setuptools_scm
 docutils<0.18
 Sphinx
+pooch
 pydata-sphinx-theme
 sphinx-gallery
+sphinxemoji
 numpydoc
 nbsphinx
 image
@@ -28,3 +27,5 @@ isort
 black
 flake8
 mypy
+pytensor>=2.28.0
+segyio
