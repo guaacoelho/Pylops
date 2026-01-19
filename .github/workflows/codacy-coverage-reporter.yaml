@@ -1,11 +1,18 @@
 # This workflow uploads PyLops coverage analysis on Codacy
 # For more information see: https://github.com/codacy/codacy-coverage-reporter-action
+
+# NOTE:
+# Codacy is temporarily disabled due to lack of configuration
+# To enable it, remove the "if false" statement under build.
+# TODO: Re-evaluate usage of pull_request_target instead of plain pull_request in case of repository secrets variables.
+
 name: PyLops-coverage
 
-on: [push, pull_request_target]
+on: [push, pull_request]
 
 jobs:
   build:
+    if: false
     strategy:
       matrix:
         platform: [ ubuntu-latest, ]
