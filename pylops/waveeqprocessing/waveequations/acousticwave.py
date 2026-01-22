@@ -489,7 +489,11 @@ class _AcousticWave(_Wave):
         # add vp to karguments to be used inside devito's solver
         self.karguments.update({"vp": function})
 
-        d = solver.forward(**self.karguments)[0]
+        # assign source location to source object with custom wavelet
+        if hasattr(self, "wav"):
+            self.wav.coordinates.data[0, :] = solver.geometry.src_positions[:]
+
+        d = solver.forward(**self.karguments, src=None if not hasattr(self, "wav") else self.wav)[0]
         d = d.resample(solver.geometry.dt).data[:][: solver.geometry.nt].T
         return d
 

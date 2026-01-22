@@ -354,6 +354,11 @@ class _ViscoAcousticWave(_Wave):
 
         # add vp to karguments to be used inside devito's solver
         self.karguments.update({"vp": function})
+
+        # assign source location to source object with custom wavelet
+        if hasattr(self, "wav"):
+            self.wav.coordinates.data[0, :] = solver.geometry.src_positions[:]
+
         d = solver.forward(**self.karguments, src=None if not hasattr(self, "wav") else self.wav)[0]
         d = d.resample(solver.geometry.dt).data[:][: solver.geometry.nt].T
         return d
@@ -405,6 +410,10 @@ class _ViscoAcousticWave(_Wave):
 
         rec = self.geometry.rec.copy()
         rec.data[:] = dobs.T
+
+        # assign source location to source object with custom wavelet
+        if hasattr(self, "wav"):
+            self.wav.coordinates.data[0, :] = solver.geometry.src_positions[:]
 
         # source wavefield
         if hasattr(self, "src_wavefield"):
@@ -527,6 +536,10 @@ class _ViscoMultiparameterWave(_ViscoAcousticWave):
 
         rec = self.geometry.rec.copy()
         rec.data[:] = rec_data.T[:]
+
+        # assign source location to source object with custom wavelet
+        if hasattr(self, "wav"):
+            self.wav.coordinates.data[0, :] = solver.geometry.src_positions[:]
 
         # source wavefield
         if hasattr(self, "src_wavefield"):
