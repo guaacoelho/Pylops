@@ -321,7 +321,11 @@ class _ElasticWave(_Wave):
 
         dim = self.model.dim
 
-        *rec_data, v = solver.forward(**self.karguments, save=self.save_wavefield)[
+        # assign source location to source object with custom wavelet
+        if hasattr(self, "wav"):
+            self.wav.coordinates.data[0, :] = solver.geometry.src_positions[:]
+
+        *rec_data, v = solver.forward(**self.karguments, save=self.save_wavefield, src=None if not hasattr(self, "wav") else self.wav)[
             0 : dim + 2
         ]
         if self.save_wavefield:
@@ -538,10 +542,15 @@ class _ElasticWave(_Wave):
 
             vfields.update({"rec_vy": rec_vy})
 
+        # assign source location to source object with custom wavelet
+        if hasattr(self, "wav"):
+            self.wav.coordinates.data[0, :] = solver.geometry.src_positions[:]
+
         if solver:
             v0 = solver.forward(
                 par=self.karguments.get("par", self.par),
                 save=True if not self._dswap_opt["dswap"] else False,
+                src=None if not hasattr(self, "wav") else self.wav,
             )[dim + 1]
         else:
             v0 = self.src_wavefield[isrc]
@@ -669,12 +678,17 @@ class _ElasticWave(_Wave):
         # If "par" was not passed as a parameter to forward execution, use the operator's default value
         self.karguments["par"] = self.karguments.get("par", self.par)
 
+        # assign source location to source object with custom wavelet
+        if hasattr(self, "wav"):
+            self.wav.coordinates.data[0, :] = solver.geometry.src_positions[:]
+
         # source wavefield
         if hasattr(self, "src_wavefield"):
             u0 = self.src_wavefield[isrc]
         else:
             par = self.karguments.get("par")
-            u0 = solver.forward(save=True if not dswap else False, par=par)[dim + 1]
+            u0 = solver.forward(save=True if not dswap else False, par=par,
+                                src=None if not hasattr(self, "wav") else self.wav)[dim + 1]
 
         # adjoint modelling (reverse wavefield)
         grad1, grad2, grad3 = solver.jacobian_adjoint(
