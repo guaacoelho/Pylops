@@ -3,7 +3,7 @@ numba
 PyWavelets
 spgl1
 scikit-fmm
-sympy==1.13.1
+sympy==1.13.3
 devito
 dtcwt
 astra-toolbox>=2.2.0
