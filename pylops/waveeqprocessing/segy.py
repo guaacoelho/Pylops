@@ -241,12 +241,14 @@ class ReadSEGY3D():
                                                      header[segyio.TraceField.SourceY] * scalco,
                                                      header[segyio.TraceField.SourceSurfaceElevation] * scalco)
                     lookup_table[index]['Receivers'] = []
+                    lookup_table[index]['scalcos'] = []
                 else:  # Not in a new shot, so increase the number of traces in the shot by 1
                     lookup_table[index]['Num_Traces'] += 1
 
                 lookup_table[index]['Receivers'].append((header[segyio.TraceField.GroupX] * scalco,
                                                          header[segyio.TraceField.GroupY] * scalco,
                                                          header[segyio.TraceField.ReceiverGroupElevation] * scalco))
+                lookup_table[index]['scalcos'].append(scalco)
                 pos_in_file += 1
 
         return lookup_table, indexes
