@@ -6,7 +6,7 @@ from pylops.utils import deps
 from pylops.utils.decorators import reshaped
 from pylops.utils.twowaympi import MPIShotsController
 from pylops.utils.typing import DTypeLike, InputDimsLike, NDArray, SamplingLike
-from pylops.waveeqprocessing.segy import ReadSEGY2D, count_segy_shots
+from pylops.waveeqprocessing.segy import ReadSEGY2D, ReadSEGY3D, count_segy_shots
 from pylops.waveeqprocessing.twoway import _Wave
 
 devito_message = deps.devito_import("the twoway module")
@@ -137,11 +137,10 @@ class _AcousticWave(_Wave):
         self.karguments = {}
 
         if segy_path:
-            if is_3d:
-                raise Exception("3D segy reader not available yet")
+            SegyReader = ReadSEGY3D if is_3d else ReadSEGY2D
 
             nshots, shot_ids = count_segy_shots(segy_path)
-            nsy = 1  # 2D
+            nsy = 1
 
             sample = segy_sample or nshots
             if sample <= 0 or sample > nshots:
@@ -162,7 +161,7 @@ class _AcousticWave(_Wave):
                 )
                 self.mpi_controller = controller
 
-            self.segyReader = ReadSEGY2D(
+            self.segyReader = SegyReader(
                 segy_path,
                 mpi=getattr(self, "mpi_controller", None),
                 shot_ids=sampled_sids,

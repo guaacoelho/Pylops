@@ -265,24 +265,18 @@ class _Wave(LinearOperator, PhysicalPropertiesMixin):
         self.dims = new_dims
         self.dimsd = new_dimsd
 
-    def _update_geometry(self, rx, rz, sx, sz, nrecs):
+    def _update_geometry(self, recs, srcs, nrecs):
         """
         Update the geometry with new receiver and source positions.
 
         Parameters
         ----------
-        rx : array-like
-            Array containing the x-coordinates of the receivers.
-        rz : array-like
-            Array containing the z-coordinates of the receivers.
-        sx : float
-            x-coordinate of the source.
-        sz : float
-            z-coordinate of the source.
+        recs : array-like
+            Array containing receivers coordinates.
+        srcs : array-like
+            Array containing sources coordinates.
         nrecs : int
             Number of receivers.
-        tn : float
-            Final recording time.
 
         Notes
         -----
@@ -293,13 +287,13 @@ class _Wave(LinearOperator, PhysicalPropertiesMixin):
         For now, it only works for 2D operatores.
         """
 
-        new_rec_positions = np.zeros((nrecs, 2))
-        new_rec_positions[:, 0] = rx
-        new_rec_positions[:, -1] = rz
+        new_rec_positions = np.zeros((nrecs, len(recs)))
+        for i, rec_d, in enumerate(recs):
+            new_rec_positions[:, i] = rec_d
 
-        new_src_positions = np.zeros((1, 2))
-        new_src_positions[:, 0] = sx
-        new_src_positions[:, -1] = sz
+        new_src_positions = np.zeros((1, len(srcs)))
+        for i, src_d, in enumerate(srcs):
+            new_src_positions[:, i] = src_d
 
         self.geometry = AcquisitionGeometry(
             self.model,
@@ -327,10 +321,8 @@ class _Wave(LinearOperator, PhysicalPropertiesMixin):
             src_coords, rec_coords = self.segyReader.getRelativeCoords(id_src)
         else:
             src_coords, rec_coords = self.segyReader.getCoords(id_src)
-        rx, rz = rec_coords
-        sx, sz = src_coords
 
-        nrec = len(rx)
+        nrec = len(rec_coords[0])
 
         # Check if the number of receivers is variable and differs from the current geometry.
         # If so, update the dimensions to match the new number of receivers for the current shot.
@@ -339,7 +331,7 @@ class _Wave(LinearOperator, PhysicalPropertiesMixin):
                 new_dims=self.dims, new_dimsd=(1, nrec, self.geometry.nt)
             )
 
-        self._update_geometry(rx, rz, sx, sz, nrec)
+        self._update_geometry(rec_coords, src_coords, nrec)
 
     def resample(self, data, num):
         """
